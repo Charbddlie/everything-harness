@@ -6,17 +6,19 @@
 
 需要 **Node.js ≥22.20.0、npm/npx、Git 和 curl**。远程安装不需要克隆仓库或发布 npm 包；以下地址在文件推送到公开可访问的 GitHub `main` 后可用。
 
-需要使用本地代理时，先按[代理设置](#代理设置)配置当前终端，再执行下方命令。
-
-Windows PowerShell：用 `cmd /d /c` 执行管道，避免 Windows PowerShell 5.1 转码损坏 UTF-8 脚本；不需要修改终端编码。
-
 ```powershell
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
+$env:ALL_PROXY = 'http://127.0.0.1:7890'
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
 
 Linux / macOS：
 
 ```sh
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=http://127.0.0.1:7890
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
@@ -153,28 +155,6 @@ node skills/pdf-analyze/dryrun.mjs
 ```
 
 解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行 `--update`。
-
-## 代理设置
-
-使用本地 `7890` 端口代理时，在当前终端设置一次即可。随后照常执行安装、更新等命令，无需添加 `curl -x`；curl、npm 和 Git 子进程会继承这些环境变量。
-
-Windows PowerShell：
-
-```powershell
-$env:HTTP_PROXY = 'http://127.0.0.1:7890'
-$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
-$env:ALL_PROXY = 'http://127.0.0.1:7890'
-```
-
-Linux / macOS：
-
-```sh
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-export all_proxy=http://127.0.0.1:7890
-```
-
-设置仅在当前终端会话及其子进程中生效，关闭终端后失效；代理地址不写入代码或全局配置。
 
 ## 验证
 

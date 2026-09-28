@@ -46,10 +46,13 @@ test('dryrun aggregates missing requirements and never exposes a key', (t) => {
   const env = { ...process.env }; delete env.MINERU_API_KEY;
   const missing = spawnSync(process.execPath, [join(skillDir, 'dryrun.mjs')], { env, cwd: folder, encoding: 'utf8' });
   assert.equal(missing.status, 1);
-  assert.match(missing.stderr, /环境变量缺少MINERU_API_KEY/);
+  assert.equal(missing.stderr.trim(), '[pdf-analyze] 失败：环境变量缺少MINERU_API_KEY');
+  assert.equal(missing.stdout, '');
   env.MINERU_API_KEY = 'secret-fixture-value';
   const good = spawnSync(process.execPath, [join(skillDir, 'dryrun.mjs')], { env, cwd: folder, encoding: 'utf8' });
   assert.equal(good.status, 0, good.stderr);
+  assert.equal(good.stdout.trim(), '[pdf-analyze] 通过');
+  assert.equal(good.stderr, '');
   assert.equal((good.stdout + good.stderr).includes(env.MINERU_API_KEY), false);
   assert.deepEqual(readdirSync(folder), []);
 });

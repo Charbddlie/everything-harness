@@ -3,9 +3,11 @@ import { environmentIssues } from './scripts/mineru_parse.mjs';
 
 export function dryrun() {
   const errors = environmentIssues();
-  for (const error of errors) console.error(`[pdf-analyze] ${error}`);
-  if (errors.length) return 1;
-  console.log('[pdf-analyze] 环境检查通过（Node.js、curl、MINERU_API_KEY）；未请求 MinerU。');
+  if (errors.length) {
+    console.error(`[pdf-analyze] 失败：${errors.join('；')}`);
+    return 1;
+  }
+  console.log('[pdf-analyze] 通过');
   return 0;
 }
 

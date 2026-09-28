@@ -318,10 +318,34 @@ test('dryruns report every failure, execute third-party entries, and require own
     installed.set(name, { path });
   }
   assert.throws(() => runDryruns(catalog.skills, installed, { log: (line) => logs.push(line) }), /2 个 skill/);
-  assert.ok(logs.includes('missing-one')); assert.ok(logs.includes('missing-two'));
+  assert.deepEqual(logs, ['[one] 失败：missing-one', '[two] 失败：missing-two']);
   const path = join(root, 'own'); mkdirSync(join(path, 'scripts'), { recursive: true });
   writeFileSync(join(path, 'scripts', 'helper.mjs'), '');
-  assert.throws(() => runDryruns([entry('own', 'Charbddlie/everything-harness')], new Map([['own', { path }]]), { log() {} }), /环境检查失败/);
+  logs.length = 0;
+  assert.throws(() => runDryruns([entry('own', 'Charbddlie/everything-harness'), entry('absent')], new Map([['own', { path }]]), { log: (line) => logs.push(line) }), /2 个 skill/);
+  assert.deepEqual(logs, ['[own] 失败：包含脚本但缺少 dryrun.mjs，请更新此 skill', '[absent] 失败：尚未安装，无法检查环境']);
+});
+
+test('dryruns print one result per skill and preserve failure reasons without duplicate labels', (t) => {
+  const root = temporary(t), logs = [], installed = new Map();
+  const scripts = {
+    failed: "console.error('[failed] 失败：missing key'); console.error('[failed] missing curl'); process.exitCode = 1;",
+    passed: "console.log('[passed] verbose success details'); console.error('diagnostic output');",
+    skipped: null,
+    silent: 'process.exitCode = 2;',
+  };
+  for (const [name, script] of Object.entries(scripts)) {
+    const path = join(root, name); mkdirSync(path);
+    if (script !== null) writeFileSync(join(path, 'dryrun.mjs'), script);
+    installed.set(name, { path });
+  }
+  assert.throws(() => runDryruns(Object.keys(scripts).map((name) => entry(name)), installed, { log: (line) => logs.push(line) }), /2 个 skill/);
+  assert.deepEqual(logs, [
+    '[failed] 失败：missing key；missing curl',
+    '[passed] 通过',
+    '[skipped] 跳过：无检查脚本',
+    '[silent] 失败：检查脚本退出：2',
+  ]);
 });
 
 function repository(t, manifest = { agents, skills: [entry('one')] }) {

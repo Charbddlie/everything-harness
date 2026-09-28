@@ -19,6 +19,8 @@ If the cache exists and contains usable extracted Markdown, JSON, or text, read 
 
 Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Use Node.js ≥22.20.0 and curl. Run `node "<skill-dir>/dryrun.mjs"` to check the environment without uploading a PDF or calling MinerU.
 
+The check prints one line: `[pdf-analyze] 通过` on success, or `[pdf-analyze] 失败：<reasons>` with a nonzero exit status when requirements are missing.
+
 ```bash
 node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf
 ```

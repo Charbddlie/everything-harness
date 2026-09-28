@@ -235,19 +235,24 @@ export function runDryruns(entries, installed, { log = console.log, env = proces
       const path = installed.get(entry.name)?.path;
       const script = path && join(path, 'dryrun.mjs');
       if (!script || !existsSync(script)) {
-        if (!path || (entry.source.toLowerCase() === OWN_SOURCE.toLowerCase() && containsScripts(path))) {
-          errors.push(`${entry.name}：${path ? '包含脚本但缺少 dryrun.mjs，请更新此 skill' : '尚未安装，无法检查环境'}`);
-        } else log(`[dryrun] ${entry.name}：无检查脚本，跳过。`);
+        check(path, '尚未安装，无法检查环境');
+        check(entry.source.toLowerCase() !== OWN_SOURCE.toLowerCase() || !containsScripts(path), '包含脚本但缺少 dryrun.mjs，请更新此 skill');
+        log(`[${entry.name}] 跳过：无检查脚本`);
         continue;
       }
-      log(`[dryrun] ${entry.name}`);
       const result = spawnSync(process.execPath, [script], { cwd: path, env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
-      if (result.stdout?.trim()) log(result.stdout.trim());
-      if (result.stderr?.trim()) log(result.stderr.trim());
-      if (result.error || result.status !== 0) errors.push(`${entry.name}：${result.error?.message ?? `dryrun 退出码 ${result.status}`}`);
-    } catch (error) { errors.push(`${entry.name}：${error.message}`); }
+      if (result.error || result.status !== 0) {
+        const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').split(/\r?\n/)
+          .map((line) => line.trim().replace(`[${entry.name}] `, '').replace(/^失败[:：]\s*/, ''))
+          .filter(Boolean).join('；');
+        throw new Error(result.error?.message ?? (detail || `检查脚本退出：${result.signal ?? result.status}`));
+      }
+      log(`[${entry.name}] 通过`);
+    } catch (error) {
+      errors.push(entry.name);
+      log(`[${entry.name}] 失败：${error.message.replace(/\r?\n/g, '；')}`);
+    }
   }
-  for (const error of errors) log(`[dryrun] 失败：${error}`);
   check(!errors.length, `${errors.length} 个 skill 环境检查失败；已安装内容保留，修复后运行 --dryrun。`);
 }
 
