@@ -1,6 +1,6 @@
 # Everything Harness
 
-个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skill.json`；本机安装、更新和删除交给系统的 `npx skills`。
+个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skills.json`；本机安装、更新和删除交给系统的 `npx skills`。
 
 ## 安装与检查
 
@@ -18,13 +18,13 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-在命令末尾追加 `--update` 可覆盖更新，追加 `--agents codex` 可筛选目标。两个参数可以组合，例如：
+在命令末尾追加 `--update` 可覆盖更新：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update --agents codex
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
 ```
 
-所有命令使用远程 `main` 的清单。`--agents` 支持 `claude-code`、`codex`、`github-copilot`，只选择清单中适用于这些 agents 的 skill。
+所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex、Claude Code 和 GitHub Copilot**；本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
 - 普通运行只同步生效 `auto_sync=true` 的 skill，全局补齐缺失的 skill / agent 组合，已安装的跳过。
 - `--update` 仅重装开启自动同步且匹配目标的 skill，不运行无范围限制的全局更新。
@@ -37,36 +37,58 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 ## 增加、删除和列出清单
 
-在远程命令末尾追加 `--add`、`--del` 或 `--list`，均可搭配 `--agents`。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
+在远程命令末尾追加 `--add`、`--del` 或 `--list`。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
 
 Windows PowerShell（Linux / macOS 将 `curl.exe` 换成 `curl`）：
 
 ```powershell
-# 为 Codex 增加第三方 skill
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name --agents codex
+# 为生效 agents 增加第三方 skill
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name
 
-# 删除该 skill 的 Claude Code 安装和清单关联
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name --agents claude-code
+# 删除生效 agents 中的安装和远程清单记录
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name
 
-# 查看 Codex 的清单
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list --agents codex
+# 查看清单
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list
 ```
 
-`--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`；省略 `--agents` 时选择全部三个。已有条目合并 agents，保留原开关。`--del skill-one skill-two` 同样支持多个名称；省略 `--agents` 时移除这些 skill 的全部关联，最后一个关联删除后才移除整条记录。删除不影响 `skills/` 中的源代码。
+`--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`，已有条目保留原开关。`--del skill-one skill-two` 同样支持多个名称，删除生效 agents 中的安装后移除清单记录。删除不影响 `skills/` 中的源代码。
 
-`--list` 显示 skill、来源、agents，以及远程 `auto_sync`、本机 `auto_sync` 和生效 `auto_sync`。本机没有覆盖时显示“跟随远程”；不因开关为 false 隐藏条目。
+`--list` 显示远程、本机和生效 agents，以及每个 skill 的来源、远程 `auto_sync`、本机 `auto_sync` 和生效 `auto_sync`。本机没有覆盖时显示“跟随远程”；不因开关为 false 隐藏条目。
 
-脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skill.json` 并推送，成功后清理临时副本。
+脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skills.json` 并推送，成功后清理临时副本。
 
 失败后按提示修复并重新运行同一条命令，脚本自动重新获取清单、补齐操作和提交推送。已完成的本机操作保留；commit 或 push 失败时保留操作副本并显示路径。远程发生并发改动时正常拒绝推送，不强推，不修改用户现有工作区。
 
-Codex 与 Copilot 不能独立卸载同一份共享内容：若清单仍给另一个保留关联，需同时选择 `--agents codex github-copilot`。如果 CLI 因其他 agent 仍在使用而保留目标目录，删除检查会报错，不创建清单 commit。
+删除按生效 agents 执行，共享目录是否保留由 CLI 根据本机 agent 检测结果决定。如果 CLI 因其他 agent 仍在使用而保留目标目录，且目标仍可访问它，删除检查会报错，不创建清单 commit。
 
-普通同步不会自动清理清单外的 skill；手动移除但仍开启自动同步的项目会在下次同步时补回。`--add`、`--del`、`--auto_sync`、`--list`、`--update`、`--dryrun` 互斥。
+普通同步不会自动清理清单外的 skill；手动移除但仍开启自动同步的项目会在下次同步时补回。`--add`、`--del`、`--auto_sync`、`--add_agents`、`--del_agents`、`--list`、`--update`、`--dryrun` 互斥。
+
+## 全局 agents
+
+可设置的名称为 `codex`、`github-copilot`、`claude-code`，一次可传多个。所有 skill 使用同一份目标列表，不设置单个 skill 的 agents。
+
+```powershell
+# 修改远程全局 agents：自动 commit / push
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot claude-code
+
+# 从远程默认目标移除 Claude Code
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del_agents claude-code
+
+# 本机只使用 Codex（基于默认的三个目标）
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot claude-code
+
+# 将 Claude Code 加回本机目标
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents claude-code
+```
+
+这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/skills.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。
+
+`agents: []` 表示没有目标，普通同步、更新和 dryrun 都会跳过。此时 skill 的 add/del 会提示先设置 agent，不修改安装或 skill 清单。
 
 ## 自动同步与本机选择
 
-远程 `skill.json` 的 `auto_sync` 是默认值。每次同步会读取 `~/.everything-harness/skill.json`：同名条目的 `auto_sync` 覆盖远程默认，没有本机条目就跟随远程。首次运行只创建 `{"skills": []}`，以后不会覆盖已有选择。来源和 agents 始终使用最新远程清单，本机文件只覆盖开关；从本机文件移除某条记录即可恢复跟随远程。
+远程 `skills.json` 的 `auto_sync` 是默认值。每次同步会读取 `~/.everything-harness/skills.json`：同名条目的 `auto_sync` 覆盖远程默认，没有本机条目就跟随远程。首次运行只创建 `{"skills": []}`，agents 和开关都跟随远程，以后不会覆盖已有选择。来源始终使用最新远程清单；从本机文件移除某个 skill 条目即可恢复其开关跟随远程。
 
 在同一个远程入口后加参数即可操作。以下命令仍使用远程脚本，无需下载其他脚本：
 
@@ -86,7 +108,7 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 将 `false` 换成 `true` 即开启。`--auto_sync` 只修改开关，不安装或删除；设为 true 后，下次同步才补齐。本机操作不需要 GitHub 写入权限，也不提交仓库。`--local` 可放在命令末尾；普通同步始终考虑本机覆盖，`--list` 始终同时展示远程和本机状态。
 
-本机 add/del 只接收远程清单已有的 skill 名称，支持一次多个，按清单中的全部 agents 操作。开关按整个 skill 生效，因此本机 add/del 和 `--auto_sync` 不接受 `--agents`；同步和列表仍支持 agent 筛选。失败时不修改本机配置，修复后重跑原命令。
+本机 add/del 只接收远程清单已有的 skill 名称，支持一次多个，使用生效的全局 agents。开关按整个 skill 生效。失败时不修改本机配置，修复后重跑原命令。
 
 ## 内容与开发约定
 
@@ -94,11 +116,11 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 ```json
 {
+  "agents": ["claude-code", "codex", "github-copilot"],
   "skills": [
     {
       "name": "pdf-analyze",
       "source": "Charbddlie/everything-harness",
-      "agents": ["claude-code", "codex", "github-copilot"],
       "auto_sync": true
     }
   ]
@@ -114,7 +136,7 @@ skills/pdf-analyze/
   scripts/mineru_parse.mjs
 skills/skill-manage/
   SKILL.md
-skill.json
+skills.json
 sync.mjs
 tests/
 AGENTS.md
@@ -156,7 +178,7 @@ export all_proxy=http://127.0.0.1:7890
 node --test
 ```
 
-真实 CLI 测试默认跳过。显式开启后会使用临时用户目录、仓库 `.tmp/` 下的 npm 缓存验证真实安装、dryrun、更新和删除，不修改个人 harness 配置：
+真实 CLI 测试默认跳过。显式开启后会使用临时用户目录、临时 Git 测试源和仓库 `.tmp/` 下的 npm 缓存，验证真实安装、dryrun、更新和删除。Git 源替换仅作用于测试子进程，不修改个人 harness 或 Git 配置；首次获取 skills CLI 仍需联网：
 
 ```powershell
 $env:SKILLS_INTEGRATION = '1'

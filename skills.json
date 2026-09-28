@@ -1,15 +1,14 @@
 {
+  "agents": ["claude-code", "codex", "github-copilot"],
   "skills": [
     {
       "name": "pdf-analyze",
       "source": "Charbddlie/everything-harness",
-      "agents": ["claude-code", "codex", "github-copilot"],
       "auto_sync": true
     },
     {
       "name": "skill-manage",
       "source": "Charbddlie/everything-harness",
-      "agents": ["claude-code", "codex", "github-copilot"],
       "auto_sync": true
     }
   ]

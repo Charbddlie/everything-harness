@@ -5,24 +5,20 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 
 export const OWN_SOURCE = 'Charbddlie/everything-harness';
-export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/skill.json`;
+export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/skills.json`;
 export const AGENTS = new Map([['claude-code', 'Claude Code'], ['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
 const SHARED_AGENTS = ['codex', 'github-copilot'];
-const USAGE = `node sync.mjs [--update | --dryrun | --list] [--agents <agent> ...]
-node sync.mjs --add <owner/repo> <skill> ... [--agents <agent> ...]
-node sync.mjs --del <skill> ... [--agents <agent> ...]
+const USAGE = `node sync.mjs [--update | --dryrun | --list]
+node sync.mjs --add <owner/repo> <skill> ...
+node sync.mjs --del <skill> ...
 node sync.mjs --auto_sync <true|false> <skill> ...
+node sync.mjs [--local] --add_agents <agent> ...
+node sync.mjs [--local] --del_agents <agent> ...
 node sync.mjs --local --add <skill> ...
 node sync.mjs --local --del <skill> ...
 node sync.mjs --local --auto_sync <true|false> <skill> ...`;
 
 function check(condition, message) { if (!condition) throw new Error(message); }
-
-function agentList(value) {
-  check(Array.isArray(value) && value.length && value.every((agent) => AGENTS.has(agent)), `agents 仅支持非空列表：${[...AGENTS.keys()].join(', ')}`);
-  check(new Set(value).size === value.length, '重复 agent');
-  return value;
-}
 
 function skillName(name) {
   check(typeof name === 'string' && name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name), `无效 skill 名：${name}`);
@@ -33,25 +29,39 @@ function sourceName(source) {
     && !['.', '..'].includes(source.split('/')[1]) && !source.toLowerCase().endsWith('.git'), `无效来源：${source}；请使用 GitHub owner/repo。`);
 }
 
+function agentNames(agents) {
+  check(Array.isArray(agents), 'agents 必须是数组。');
+  for (const agent of agents) check(AGENTS.has(agent), `无效 agent：${agent}；可选：${[...AGENTS.keys()].join(', ')}。`);
+  check(new Set(agents).size === agents.length, '重复 agent 名');
+}
+
+const agentMode = (mode) => mode === 'add_agents' || mode === 'del_agents';
+const skillOperation = (mode) => mode === 'add' || mode === 'del';
+
+function changeAgents(agents, options) {
+  return options.mode === 'add_agents' ? [...new Set([...agents, ...options.names])]
+    : agents.filter((agent) => !options.names.includes(agent));
+}
+
 export function parseArgs(args) {
-  const options = { mode: 'sync', agents: undefined, names: [], help: false, local: false };
+  const options = { mode: 'sync', names: [], help: false, local: false };
   const values = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
     if (arg === '--local' && !options.local) { options.local = true; continue; }
-    if (arg === '--agents' && options.agents === undefined) {
-      const agents = [];
-      while (i + 1 < args.length && !args[i + 1].startsWith('-')) agents.push(args[++i]);
-      options.agents = agentList(agents);
-    } else if (['--add', '--del', '--list', '--update', '--dryrun', '--auto_sync'].includes(arg) && options.mode === 'sync') {
+    if (['--add', '--del', '--list', '--update', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
       options.mode = arg.slice(2);
-      if (['--add', '--del', '--auto_sync'].includes(arg)) {
+      if (['--add', '--del', '--auto_sync', '--add_agents', '--del_agents'].includes(arg)) {
         while (i + 1 < args.length && !args[i + 1].startsWith('-')) values.push(args[++i]);
       }
     } else throw new Error(`未知、重复或互斥参数：${arg}\n用法：${USAGE}`);
   }
-  if (['add', 'del', 'auto_sync'].includes(options.mode)) {
+  if (agentMode(options.mode)) {
+    check(values.length > 0, `--${options.mode} 需要明确的 agent 名称。`);
+    agentNames(values);
+    options.names = values;
+  } else if (['add', 'del', 'auto_sync'].includes(options.mode)) {
     if (options.mode === 'add' && !options.local) { options.source = values.shift(); sourceName(options.source); }
     if (options.mode === 'auto_sync') {
       const value = values.shift();
@@ -63,8 +73,6 @@ export function parseArgs(args) {
     check(new Set(values).size === values.length, '重复 skill 名');
     options.names = values;
   }
-  check(!(options.agents && (options.mode === 'auto_sync' || (options.local && ['add', 'del'].includes(options.mode)))),
-    '本机增删和自动同步开关按整个 skill 生效，请省略 --agents；普通同步和 --list 仍可筛选 agents。');
   return options;
 }
 
@@ -72,13 +80,14 @@ function objectKeys(value, keys, label) {
   check(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every((key) => keys.includes(key)), `${label} 格式错误或包含未知字段。`);
 }
 
-export function validateManifest(value) {
-  objectKeys(value, ['skills'], '清单');
+export function validateManifest(value, { local = false } = {}) {
+  objectKeys(value, ['agents', 'skills'], '清单');
+  if (!local || Object.hasOwn(value, 'agents')) agentNames(value.agents);
   check(Array.isArray(value.skills), 'skills 必须是数组。');
   const names = new Set();
   for (const entry of value.skills) {
-    objectKeys(entry, ['source', 'name', 'agents', 'auto_sync'], 'skill');
-    sourceName(entry.source); skillName(entry.name); agentList(entry.agents);
+    objectKeys(entry, ['source', 'name', 'auto_sync'], 'skill');
+    sourceName(entry.source); skillName(entry.name);
     check(typeof entry.auto_sync === 'boolean', `${entry.name} 的 auto_sync 必须是 true 或 false。`);
     check(!names.has(entry.name), `重复 skill 名：${entry.name}`);
     names.add(entry.name);
@@ -89,9 +98,16 @@ export function validateManifest(value) {
 const stateDirectory = (dependencies) => dependencies.stateDir ?? join(homedir(), '.everything-harness');
 
 function readLocalSettings(dependencies) {
-  const path = join(stateDirectory(dependencies), 'skill.json');
+  const path = join(stateDirectory(dependencies), 'skills.json');
   const text = existsSync(path) ? readFileSync(path, 'utf8') : null;
-  const settings = text === null ? { skills: [] } : validateManifest(parseJson(text, path));
+  const settings = text === null ? { skills: [] } : parseJson(text, path);
+  // Older local overrides may contain agent selections; keep their sync choices.
+  if (Array.isArray(settings?.skills)) {
+    for (const entry of settings.skills) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.agents;
+    }
+  }
+  validateManifest(settings, { local: true });
   return { path, text, settings };
 }
 
@@ -103,6 +119,8 @@ function readCatalog(dependencies) {
 function enabledSkill(entry, local) {
   return local.settings.skills.find((item) => item.name === entry.name)?.auto_sync ?? entry.auto_sync;
 }
+
+const effectiveAgents = (manifest, local) => local.settings.agents ?? manifest.agents;
 
 function writeAtomic(path, text) {
   mkdirSync(dirname(path), { recursive: true });
@@ -141,11 +159,6 @@ function installedSkills(text) {
   return result;
 }
 
-function selectSkills(manifest, agents) {
-  return manifest.skills.map((entry) => ({ ...entry, agents: entry.agents.filter((agent) => !agents || agents.includes(agent)) }))
-    .filter((entry) => entry.agents.length);
-}
-
 function sameSource(entry, source) {
   return entry.sourceType === 'github' && entry.source?.toLowerCase() === source.toLowerCase();
 }
@@ -165,12 +178,12 @@ function hasAgent(entry, agent, sharedSkillsDir) {
     || (SHARED_AGENTS.includes(agent) && relative(sharedSkillsDir, dirname(entry.path)) === ''));
 }
 
-function installationJobs(entries, installed, update, sharedSkillsDir) {
+function installationJobs(entries, installed, update, sharedSkillsDir, targets) {
   checkSources(entries, installed);
   const jobs = new Map();
   for (const entry of entries) {
     const current = installed.get(entry.name);
-    const agents = update || !current?.source ? entry.agents : entry.agents.filter((agent) => !hasAgent(current, agent, sharedSkillsDir));
+    const agents = update || !current?.source ? targets : targets.filter((agent) => !hasAgent(current, agent, sharedSkillsDir));
     if (!agents.length) continue;
     const key = `${entry.source.toLowerCase()}:${agents.join(',')}`;
     if (!jobs.has(key)) jobs.set(key, { source: entry.source, names: [], agents });
@@ -246,8 +259,8 @@ export function containsScripts(path) {
   });
 }
 
-function install(entries, { runSkills, installed, update = false, sharedSkillsDir, log }) {
-  const jobs = installationJobs(entries, installed, update, sharedSkillsDir);
+function install(entries, { runSkills, installed, update = false, sharedSkillsDir, agents, log }) {
+  const jobs = installationJobs(entries, installed, update, sharedSkillsDir, agents);
   for (const job of jobs) {
     const label = `${job.source} / ${job.names.join(', ')} → ${job.agents.join(', ')}`;
     log(`${update ? '更新' : '安装'}：${label}`);
@@ -269,84 +282,84 @@ function install(entries, { runSkills, installed, update = false, sharedSkillsDi
 function remove(entries, context) {
   checkSources(entries, context.installed);
   for (const entry of entries) {
-    if (!entry.agents.some((agent) => hasAgent(context.installed.get(entry.name), agent, context.sharedSkillsDir))) {
+    if (!context.agents.some((agent) => hasAgent(context.installed.get(entry.name), agent, context.sharedSkillsDir))) {
       context.log(`${entry.name} 的目标安装已不存在，继续更新设置。`);
       continue;
     }
-    const agents = entry.agents.some((agent) => SHARED_AGENTS.includes(agent))
-      ? [...new Set([...entry.agents, ...SHARED_AGENTS])] : entry.agents;
-    context.log(`删除本机安装：${entry.name} → ${agents.join(', ')}`);
+    context.log(`删除本机安装：${entry.name} → ${context.agents.join(', ')}`);
     try {
-      const output = context.runSkills(['remove', entry.name, '-g', '--yes', '--agent', ...agents]);
+      const output = context.runSkills(['remove', entry.name, '-g', '--yes', '--agent', ...context.agents]);
       if (output.trim()) context.log(output.trim());
     } catch (error) { throw new Error(`${entry.source} / ${entry.name} 删除失败：${error.message}`); }
   }
   const remaining = installedSkills(context.runSkills(['list', '-g', '--json']));
   for (const entry of entries) {
-    check(!entry.agents.some((agent) => hasAgent(remaining.get(entry.name), agent, context.sharedSkillsDir)),
+    check(!context.agents.some((agent) => hasAgent(remaining.get(entry.name), agent, context.sharedSkillsDir)),
       `${entry.name} 的目标安装仍存在（可能由其他 agent 共享），未修改设置或创建 commit。`);
   }
 }
 
-function listCatalog(entries, local, log) {
-  log(`远程清单：${MANIFEST_URL}\n本机设置：${local.path}`);
-  log('skill\t来源\tagents\t远程 auto_sync\t本机 auto_sync\t生效 auto_sync');
+function listCatalog(manifest, local, log) {
+  const entries = manifest.skills;
+  const display = (agents) => agents.length ? agents.join(', ') : '无';
+  log(`远程清单：${MANIFEST_URL}\n本机设置：${local.path}\n远程 agents：${display(manifest.agents)}\n本机 agents：${local.settings.agents ? display(local.settings.agents) : '跟随远程'}\n生效 agents：${display(effectiveAgents(manifest, local))}`);
+  log('skill\t来源\t远程 auto_sync\t本机 auto_sync\t生效 auto_sync');
   log(entries.length ? entries.map((entry) => {
     const override = local.settings.skills.find((item) => item.name === entry.name);
-    return `${entry.name}\t${entry.source}\t${entry.agents.join(', ')}\t${entry.auto_sync}\t${override ? override.auto_sync : '跟随远程'}\t${enabledSkill(entry, local)}`;
+    return `${entry.name}\t${entry.source}\t${entry.auto_sync}\t${override ? override.auto_sync : '跟随远程'}\t${enabledSkill(entry, local)}`;
   }).join('\n') : '没有匹配的 skill。');
 }
 
 function manageLocal(options, dependencies, log) {
   const { manifest, local } = readCatalog(dependencies);
-  const entries = options.names.map((name) => {
+  const entries = agentMode(options.mode) ? [] : options.names.map((name) => {
     const entry = manifest.skills.find((item) => item.name === name);
     check(entry, `远程清单中不存在 skill：${name}。请先用远程 --add 添加到仓库清单。`);
     return entry;
   });
-  if (options.mode !== 'auto_sync') {
-    const context = makeContext(dependencies, log);
+  if (skillOperation(options.mode)) {
+    const context = makeContext(dependencies, log, effectiveAgents(manifest, local));
     if (options.mode === 'add') {
       install(entries, context);
       (dependencies.runDryruns ?? runDryruns)(entries, context.installed, { log, env: dependencies.env });
     } else remove(entries, context);
   }
   check(readLocalSettings(dependencies).text === local.text, '操作期间本机设置已被修改；本机操作已完成，请重新运行同一条命令。');
+  if (agentMode(options.mode)) local.settings.agents = changeAgents(effectiveAgents(manifest, local), options);
   for (const entry of entries) {
     local.settings.skills = local.settings.skills.filter((item) => item.name !== entry.name);
     local.settings.skills.push({ ...entry, auto_sync: options.mode === 'auto_sync' ? options.autoSync : options.mode === 'add' });
   }
-  local.settings.skills.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  if (!agentMode(options.mode)) local.settings.skills.sort((a, b) => a.name.localeCompare(b.name, 'en'));
   writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n');
-  log(`本机设置已保存：${local.path}（${entries.map((entry) => entry.name).join(', ')}）`);
+  log(`本机设置已保存：${local.path}（${options.names.join(', ')}）`);
+  if (agentMode(options.mode)) log('agents 设置将在下次同步时生效；已有安装保留。');
 }
 
 export function changeManifest(manifest, options) {
   const next = structuredClone(manifest);
   const affected = [];
+  if (agentMode(options.mode)) {
+    next.agents = changeAgents(next.agents, options);
+    return { next: validateManifest(next), affected };
+  }
   for (const name of options.names) {
     let entry = next.skills.find((skill) => skill.name === name);
     if (options.mode === 'add') {
       check(!entry || entry.source.toLowerCase() === options.source.toLowerCase(), `来源冲突：${name}`);
-      if (!entry) { entry = { name, source: options.source, agents: [], auto_sync: true }; next.skills.push(entry); }
-      const agents = options.agents ?? [...AGENTS.keys()];
-      affected.push({ ...entry, agents });
-      entry.agents = [...AGENTS.keys()].filter((agent) => agents.includes(agent) || entry.agents.includes(agent));
+      if (!entry) { entry = { name, source: options.source, auto_sync: true }; next.skills.push(entry); }
+      affected.push(entry);
     } else if (options.mode === 'auto_sync') {
       check(entry, `清单中不存在 skill：${name}`);
       entry.auto_sync = options.autoSync;
       affected.push(entry);
     } else {
       check(entry, `清单中不存在 skill：${name}`);
-      const agents = entry.agents.filter((agent) => !options.agents || options.agents.includes(agent));
-      const remaining = entry.agents.filter((agent) => !agents.includes(agent));
-      check(!(agents.some((agent) => SHARED_AGENTS.includes(agent)) && remaining.some((agent) => SHARED_AGENTS.includes(agent))),
-        `${name} 的 Codex / Copilot 共用安装目录，无法单独卸载；请同时选择 --agents codex github-copilot。`);
-      if (agents.length) affected.push({ ...entry, agents });
-      entry.agents = remaining;
+      affected.push(entry);
+      next.skills = next.skills.filter((skill) => skill.name !== name);
     }
   }
-  next.skills = next.skills.filter((entry) => entry.agents.length).sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  next.skills.sort((a, b) => a.name.localeCompare(b.name, 'en'));
   return { next: validateManifest(next), affected };
 }
 
@@ -378,7 +391,7 @@ function manageManifest(options, dependencies, log) {
     // Fail before changing local skills when a commit cannot identify its author.
     git(['var', 'GIT_AUTHOR_IDENT']);
     git(['var', 'GIT_COMMITTER_IDENT']);
-    const before = readFileSync(join(root, 'skill.json'), 'utf8');
+    const before = readFileSync(join(root, 'skills.json'), 'utf8');
     applyManifestChange(options, dependencies, log, root, git, before, sources, () => { keep = true; });
     keep = false;
   } catch (error) {
@@ -391,9 +404,8 @@ function manageManifest(options, dependencies, log) {
 function applyManifestChange(options, dependencies, log, root, git, before, sources, onWrite) {
   const manifest = validateManifest(parseJson(before, '远程清单'));
   const { next, affected } = changeManifest(manifest, options);
-  if (!affected.length) { log('清单中没有匹配的 agent，无需操作。'); return; }
-  if (options.mode !== 'auto_sync') {
-    const context = makeContext(dependencies, log);
+  if (skillOperation(options.mode)) {
+    const context = makeContext(dependencies, log, effectiveAgents(manifest, readLocalSettings(dependencies)));
     checkSources(affected, context.installed);
     if (options.mode === 'add') {
       install(affected, context);
@@ -403,10 +415,10 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
   const text = JSON.stringify(next, null, 2) + '\n';
   if (JSON.stringify(next) === JSON.stringify(manifest)) { log('清单无变化，无需 commit / push。'); return; }
   onWrite();
-  writeFileSync(join(root, 'skill.json'), text);
+  writeFileSync(join(root, 'skills.json'), text);
   try {
-    const action = options.mode === 'auto_sync' ? `Set auto_sync=${options.autoSync} for` : options.mode === 'add' ? 'Add' : 'Remove';
-    git(['commit', '--only', '-m', `${action} skills: ${options.names.join(', ')}`, '--', 'skill.json']);
+    const action = options.mode === 'auto_sync' ? `Set auto_sync=${options.autoSync} for` : ['add', 'add_agents'].includes(options.mode) ? 'Add' : 'Remove';
+    git(['commit', '--only', '-m', `${action} ${agentMode(options.mode) ? 'agents' : 'skills'}: ${options.names.join(', ')}`, '--', 'skills.json']);
   } catch (error) { throw new Error(`Git commit 失败；清单改动已保留：${error.message}`); }
   const errors = [];
   let pushed = false;
@@ -416,27 +428,29 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
   }
   check(pushed, `commit 已完成，push 失败；本地提交已保留。\n${errors.join('\n')}`);
   log('清单 commit 和 push 已完成。');
+  if (agentMode(options.mode)) log('agents 设置将在下次同步时生效；已有安装保留，本机 agents 覆盖仍优先。');
 }
 
-function makeContext(dependencies, log) {
+function makeContext(dependencies, log, agents) {
+  check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
   const runSkills = dependencies.runSkills ?? createSkillsRunner({ env: dependencies.env, cwd: dependencies.cwd });
   return { runSkills, installed: installedSkills(runSkills(['list', '-g', '--json'])),
-    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(homedir(), '.agents', 'skills'), log };
+    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(homedir(), '.agents', 'skills'), agents, log };
 }
 
 export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? console.log;
-  if (options.help) { log(`用法：${USAGE}\n--add / --del：先操作本机，成功后提交并推送仓库清单。\n--auto_sync：只修改开关；--local：只修改本机设置，不操作 Git。\n--list：显示远程、本机和生效开关；--dryrun：检查开启自动同步的 skill 环境。`); return; }
+  if (options.help) { log(`用法：${USAGE}\n--add / --del：先操作本机，成功后提交并推送仓库清单。\n--auto_sync：只修改开关；--add_agents / --del_agents：只修改全局目标，下次同步生效，不卸载。\n--local：只修改本机设置，不操作 Git。\n--list：显示远程、本机和生效开关及 agents；--dryrun：检查开启自动同步的 skill 环境。\n支持的 agent：${[...AGENTS.keys()].join(', ')}`); return; }
   const [major, minor] = process.versions.node.split('.').map(Number);
   check(major > 22 || (major === 22 && minor >= 20), '需要 Node.js ≥22.20.0。');
-  if (['add', 'del', 'auto_sync'].includes(options.mode)) {
+  if (['add', 'del', 'auto_sync'].includes(options.mode) || agentMode(options.mode)) {
     return options.local ? manageLocal(options, dependencies, log) : manageManifest(options, dependencies, log);
   }
   const { manifest, local } = readCatalog(dependencies);
-  let entries = selectSkills(manifest, options.agents);
+  let entries = manifest.skills;
   if (options.mode === 'list') {
-    listCatalog(entries, local, log);
+    listCatalog(manifest, local, log);
     return;
   }
   if (options.mode === 'sync' || options.mode === 'update') {
@@ -444,7 +458,9 @@ export function sync(args, dependencies = {}) {
   }
   entries = entries.filter((entry) => enabledSkill(entry, local));
   if (!entries.length) { log('没有匹配的 skill，无需安装或检查。'); return; }
-  const context = makeContext(dependencies, log);
+  const agents = effectiveAgents(manifest, local);
+  if (!agents.length) { log('生效 agents 为空，无需安装或检查。'); return; }
+  const context = makeContext(dependencies, log, agents);
   checkSources(entries, context.installed);
   let jobs = 0;
   if (options.mode !== 'dryrun') jobs = install(entries, { ...context, update: options.mode === 'update' });
