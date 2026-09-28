@@ -6,43 +6,25 @@
 
 需要 **Node.js ≥22.20.0、npm/npx、Git 和 curl**。远程安装不需要克隆仓库或发布 npm 包；以下地址在文件推送到公开可访问的 GitHub `main` 后可用。
 
+需要使用本地代理时，先按[代理设置](#代理设置)配置当前终端，再执行下方命令。
+
 Windows PowerShell：用 `cmd /d /c` 执行管道，避免 Windows PowerShell 5.1 转码损坏 UTF-8 脚本；不需要修改终端编码。
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
-
-# 使用本地 7890 端口代理
-$env:HTTP_PROXY = 'http://127.0.0.1:7890'
-$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
-$env:ALL_PROXY = 'http://127.0.0.1:7890'
-cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
 
 Linux / macOS：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
-
-# 使用本地 7890 端口代理
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-export all_proxy=http://127.0.0.1:7890
-curl -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
 在 node 命令末尾追加 `--update` 可覆盖更新（Windows 放在外层双引号内）：
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
-
-# 使用本地 7890 端口代理
-$env:HTTP_PROXY = 'http://127.0.0.1:7890'
-$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
-$env:ALL_PROXY = 'http://127.0.0.1:7890'
-cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
-
-需要代理时，执行对应代理示例中的环境变量设置和命令。环境变量仅作用于当前终端会话，后续清单下载、npm 和 Git 子进程会继承；单独使用 `curl -x` 只代理入口下载，Git 克隆仍可能因直连失败。更多说明见[代理与验证](#代理与验证)。
 
 所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex、Claude Code 和 GitHub Copilot**；本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
@@ -172,9 +154,11 @@ node skills/pdf-analyze/dryrun.mjs
 
 解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行 `--update`。
 
-## 代理与验证
+## 代理设置
 
-子进程继承环境代理；例如 Windows PowerShell：
+使用本地 `7890` 端口代理时，在当前终端设置一次即可。随后照常执行安装、更新等命令，无需添加 `curl -x`；curl、npm 和 Git 子进程会继承这些环境变量。
+
+Windows PowerShell：
 
 ```powershell
 $env:HTTP_PROXY = 'http://127.0.0.1:7890'
@@ -190,7 +174,9 @@ export https_proxy=http://127.0.0.1:7890
 export all_proxy=http://127.0.0.1:7890
 ```
 
-代理不写死在代码中。curl、npm、Git 和 skills 自身的请求遵循各自的代理支持。
+设置仅在当前终端会话及其子进程中生效，关闭终端后失效；代理地址不写入代码或全局配置。
+
+## 验证
 
 离线测试无需安装项目依赖，包括临时 Git 仓库中的 commit / push 流程：
 
