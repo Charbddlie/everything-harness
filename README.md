@@ -34,6 +34,18 @@ sh install.sh --disable codex my-skill
 未勾选的 skills 会从所选 agent 移除；未选择的 agent 不受交互安装影响。
 没有 skills 时也能单独安装公共规则。
 
+Agent 或自动化脚本使用非交互模式，必须明确目标 agent：
+
+```bat
+install.cmd --non-interactive --agents codex
+install.cmd --non-interactive --agents claude codex --skills pdf-analyze
+```
+
+Linux / macOS 使用 `sh install.sh` 加相同参数。省略 `--skills` 时安装全部 skills，公共规则自动安装。
+指定 `--skills` 时，所选 agent 中未选中的本项目 skill 链接会被移除；只调整单个 skill 使用 `--enable AGENT SKILL` 或 `--disable AGENT SKILL`。
+安装、启用和禁用都会同步 `skills.db`；也可单独执行 `--update`，按实际目录和链接刷新状态。
+`--non-interactive`、`--update`、`--enable`、`--disable` 不能组合使用。
+
 脚本先检查项目 `.venv`，不存在就自动创建；首次运行或 `requirements.txt` 改动后安装依赖。
 后续运行复用环境，不重复联网安装。Linux 若缺少 venv 支持，需先安装系统的 `python3-venv`。
 

@@ -10,3 +10,32 @@
 - 安装使用符号链接，重复运行应安全。只备份公共规则目标文件，不备份 skill，不删除 skill 源内容；SQLite 状态以实际链接为准。
 - 验证改动时使用隔离临时目录，避免修改个人 agent 配置。测试命令为项目 venv 的 `python -m unittest discover -s tests -v`；权限导致的跳过必须如实说明。
 - `.venv/`、`skills.db` 及其附属文件、`key.env`、Python 缓存只保存在本机，不提交。发布前检查暂存文件，保留各平台 SQLite 二进制及校验信息。
+
+## install 脚本用法
+
+根据系统选择入口：Windows 在项目目录执行 `.\install.cmd`，Linux / macOS 执行 `sh install.sh`。两个入口接受相同参数，先检查或创建项目 `.venv`，再运行安装器。
+
+直接运行、不带参数时是供用户操作的交互模式：先勾选 agent，再勾选 skills（默认全选），公共规则自动安装。Agent 自动执行时使用下面的非交互命令，不启动 TUI 或等待用户勾选。
+
+Windows 示例（Linux / macOS 把 `.\install.cmd` 替换为 `sh install.sh`）：
+
+```bat
+:: 非交互安装到指定 agent，省略 --skills 时安装全部 skills
+.\install.cmd --non-interactive --agents codex
+
+:: 多个 agent、指定 skills；也可在 --skills 后列出多个 skill 名
+.\install.cmd --non-interactive --agents claude codex --skills pdf-analyze
+
+:: 扫描 content/ 和实际链接，同步本机数据库中的 skill 状态
+.\install.cmd --update
+
+:: 为某个 agent 启用或禁用单个 skill
+.\install.cmd --enable codex pdf-analyze
+.\install.cmd --disable codex pdf-analyze
+```
+
+- Agent 参数使用 `claude`、`codex`、`copilot`；skill 参数使用 `content/` 下的目录名。
+- 非交互安装必须显式给出 `--agents`。它与交互安装效果一致：安装 `content/AGENTS.md`，启用所选 skills，并移除所选 agent 中未选中的本项目 skill 链接。只调整一个 skill 时使用 `--enable` / `--disable`。
+- 安装、enable、disable 完成后都会依据实际链接同步 `skills.db`。`--update` 可单独同步状态：添加新 skill、删除失效记录及对应的本项目链接、记录手动修改链接后的状态；新 skill 不会自动启用。
+- `--enable AGENT SKILL` 创建 skill 链接并确保公共规则已安装；`--disable AGENT SKILL` 只移除对应的本项目 skill 链接，保留源内容和公共规则。
+- `--non-interactive`、`--update`、`--enable`、`--disable` 互斥；查看全部参数使用 `--help`。成功退出码为 0，操作失败为 1，参数错误为 2。Windows 创建链接仍需开发者模式或管理员权限。
