@@ -6,6 +6,11 @@
   ],
   "skills": [
     {
+      "name": "copilot-api",
+      "source": "Charbddlie/everything-harness",
+      "auto_sync": true
+    },
+    {
       "name": "paper-add",
       "source": "Charbddlie/everything-harness",
       "auto_sync": false
