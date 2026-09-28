@@ -1,0 +1,1 @@
+"""Small, local skill manager."""
