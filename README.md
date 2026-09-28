@@ -10,19 +10,30 @@ Windows PowerShell：
 
 ```powershell
 curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
+
+# 使用本地 7890 端口代理
+curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
 Linux / macOS：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
+
+# 使用本地 7890 端口代理
+curl -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
 在命令末尾追加 `--update` 可覆盖更新：
 
 ```powershell
 curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
+
+# 使用本地 7890 端口代理
+curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
 ```
+
+需要代理时，选择对应的代理命令执行即可。`-x` 指定本次 curl 请求使用的代理；脚本运行后的清单下载、npm 和 Git 请求如需代理，按[代理与验证](#代理与验证)设置环境变量。
 
 所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex、Claude Code 和 GitHub Copilot**；本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
