@@ -12,6 +12,9 @@ Windows PowerShell：用 `cmd /d /c` 执行管道，避免 Windows PowerShell 5.
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 
 # 使用本地 7890 端口代理
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
+$env:ALL_PROXY = 'http://127.0.0.1:7890'
 cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
 
@@ -21,6 +24,9 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 
 # 使用本地 7890 端口代理
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=http://127.0.0.1:7890
 curl -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
@@ -30,10 +36,13 @@ curl -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 
 # 使用本地 7890 端口代理
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
+$env:ALL_PROXY = 'http://127.0.0.1:7890'
 cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
 
-需要代理时，选择对应的代理命令执行即可。`-x` 指定本次 curl 请求使用的代理；脚本运行后的清单下载、npm 和 Git 请求如需代理，按[代理与验证](#代理与验证)设置环境变量。
+需要代理时，执行对应代理示例中的环境变量设置和命令。环境变量仅作用于当前终端会话，后续清单下载、npm 和 Git 子进程会继承；单独使用 `curl -x` 只代理入口下载，Git 克隆仍可能因直连失败。更多说明见[代理与验证](#代理与验证)。
 
 所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex、Claude Code 和 GitHub Copilot**；本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
