@@ -1,6 +1,5 @@
 {
   "agents": [
-    "claude-code",
     "codex",
     "github-copilot"
   ],
