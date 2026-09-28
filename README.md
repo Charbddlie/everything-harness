@@ -6,13 +6,13 @@
 
 需要 **Node.js ≥22.20.0、npm/npx、Git 和 curl**。远程安装不需要克隆仓库或发布 npm 包；以下地址在文件推送到公开可访问的 GitHub `main` 后可用。
 
-Windows PowerShell：
+Windows PowerShell：用 `cmd /d /c` 执行管道，避免 Windows PowerShell 5.1 转码损坏 UTF-8 脚本；不需要修改终端编码。
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 
 # 使用本地 7890 端口代理
-curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
+cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
 
 Linux / macOS：
@@ -24,13 +24,13 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 curl -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-在命令末尾追加 `--update` 可覆盖更新：
+在 node 命令末尾追加 `--update` 可覆盖更新（Windows 放在外层双引号内）：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 
 # 使用本地 7890 端口代理
-curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
+cmd /d /c "curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
 
 需要代理时，选择对应的代理命令执行即可。`-x` 指定本次 curl 请求使用的代理；脚本运行后的清单下载、npm 和 Git 请求如需代理，按[代理与验证](#代理与验证)设置环境变量。
@@ -48,19 +48,19 @@ curl.exe -x http://127.0.0.1:7890 -fsSL https://raw.githubusercontent.com/Charbd
 
 ## 增加、删除和列出清单
 
-在远程命令末尾追加 `--add`、`--del` 或 `--list`。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
+在远程命令中 node 的参数末尾追加 `--add`、`--del` 或 `--list`（Windows 放在外层双引号内）。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
 
-Windows PowerShell（Linux / macOS 将 `curl.exe` 换成 `curl`）：
+Windows PowerShell（Linux / macOS 去掉外层 `cmd /d /c "…"`，将 `curl.exe` 换成 `curl`）：
 
 ```powershell
 # 为生效 agents 增加第三方 skill
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name"
 
 # 删除生效 agents 中的安装和远程清单记录
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name"
 
 # 查看清单
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list"
 ```
 
 `--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`，已有条目保留原开关。`--del skill-one skill-two` 同样支持多个名称，删除生效 agents 中的安装后移除清单记录。删除不影响 `skills/` 中的源代码。
@@ -81,16 +81,16 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 ```powershell
 # 修改远程全局 agents：自动 commit / push
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot claude-code
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot claude-code"
 
 # 从远程默认目标移除 Claude Code
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del_agents claude-code
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del_agents claude-code"
 
 # 本机只使用 Codex（基于默认的三个目标）
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot claude-code
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot claude-code"
 
 # 将 Claude Code 加回本机目标
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents claude-code
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents claude-code"
 ```
 
 这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/skills.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。
@@ -105,19 +105,19 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 ```powershell
 # 关闭 pdf-analyze 的远程默认自动同步：自动 commit / push
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --auto_sync false pdf-analyze
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --auto_sync false pdf-analyze"
 
 # 只在本机安装 pdf-analyze，dryrun 成功后保存 auto_sync=true
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add pdf-analyze
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add pdf-analyze"
 
 # 只在本机删除 pdf-analyze，成功后保存 auto_sync=false，后续同步不会装回
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del pdf-analyze
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del pdf-analyze"
 
 # 只修改本机开关，保留当前安装
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --auto_sync false pdf-analyze
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --auto_sync false pdf-analyze"
 ```
 
-将 `false` 换成 `true` 即开启。`--auto_sync` 只修改开关，不安装或删除；设为 true 后，下次同步才补齐。本机操作不需要 GitHub 写入权限，也不提交仓库。`--local` 可放在命令末尾；普通同步始终考虑本机覆盖，`--list` 始终同时展示远程和本机状态。
+将 `false` 换成 `true` 即开启。`--auto_sync` 只修改开关，不安装或删除；设为 true 后，下次同步才补齐。本机操作不需要 GitHub 写入权限，也不提交仓库。`--local` 可放在 node 参数末尾（Windows 外层双引号内）；普通同步始终考虑本机覆盖，`--list` 始终同时展示远程和本机状态。
 
 本机 add/del 只接收远程清单已有的 skill 名称，支持一次多个，使用生效的全局 agents。开关按整个 skill 生效。失败时不修改本机配置，修复后重跑原命令。
 

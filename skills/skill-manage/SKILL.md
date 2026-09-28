@@ -7,10 +7,10 @@ description: 使用远程 sync.mjs 管理个人 skill、设置全局 agents、�
 
 需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`claude-code`、`github-copilot`，可手动增删。
 
-Windows PowerShell：
+Windows PowerShell：通过 `cmd /d /c` 传递原始字节，避免 PowerShell 5.1 管道转码损坏 UTF-8 脚本。
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
 
 Linux / macOS：
@@ -19,7 +19,7 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-默认同步开启 `auto_sync` 的 skill，并检查环境。本机 `~/.everything-harness/skills.json` 中的开关优先，没有本机记录就跟随远程。所有操作都用上面的远程命令，在末尾追加参数：
+默认同步开启 `auto_sync` 的 skill，并检查环境。本机 `~/.everything-harness/skills.json` 中的开关优先，没有本机记录就跟随远程。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
 
 - `--update`：覆盖更新。
 - `--add owner/repo skill-name`：先安装并检查环境，成功后加入远程清单。
@@ -42,23 +42,23 @@ agents 增删只保存配置，下次同步生效，已有安装保留。本机�
 例如，增加一个 skill：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name"
 ```
 
 只在本机删除一个 skill：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del skill-name
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del skill-name"
 ```
 
 从默认三个目标中，只为本机保留 Codex：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents claude-code github-copilot
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents claude-code github-copilot"
 ```
 
 更新所有开启自动同步的 skill：
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
