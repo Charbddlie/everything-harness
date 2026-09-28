@@ -2,3 +2,4 @@
 *.md text eol=lf
 *.mjs text eol=lf
 *.json text eol=lf
+skills/copilot-api/scripts/*.bat text eol=crlf
