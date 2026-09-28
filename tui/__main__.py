@@ -7,12 +7,12 @@ from .manager import Manager
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="用符号链接管理 Claude Code、Codex、Copilot CLI 的 skills 和公共规则。")
+    parser = argparse.ArgumentParser(description="管理 Claude Code、Codex、Copilot CLI 的 skills 和公共规则（Windows 复制，Linux/macOS 符号链接）。")
     commands = parser.add_mutually_exclusive_group()
     commands.add_argument("--non-interactive", action="store_true", help="不启动界面，按 --agents 和 --skills 安装")
-    commands.add_argument("--update", action="store_true", help="扫描源目录和实际链接，同步 skills.db")
+    commands.add_argument("--update", action="store_true", help="同步 skills.db；Windows 同时刷新已安装的副本")
     commands.add_argument("--enable", nargs=2, metavar=("AGENT", "SKILL"), help="启用 skill；agent 为 claude、codex、copilot")
-    commands.add_argument("--disable", nargs=2, metavar=("AGENT", "SKILL"), help="移除本项目的 skill 链接")
+    commands.add_argument("--disable", nargs=2, metavar=("AGENT", "SKILL"), help="移除本项目安装的 skill")
     parser.add_argument("--agents", nargs="+", choices=("claude", "codex", "copilot"), help="非交互安装的目标 agent，必须显式指定")
     parser.add_argument("--skills", nargs="+", metavar="SKILL", help="非交互安装的 skill 列表，省略则全选")
     args = parser.parse_args()
@@ -23,8 +23,8 @@ def main() -> int:
     manager = Manager(Path(__file__).resolve().parent.parent)
     try:
         if args.update:
-            states = manager.sync()
-            print(f"已同步 {len(states)} 个 skills，{sum(sum(row.values()) for row in states.values())} 个启用链接。")
+            states = manager.update()
+            print(f"已同步 {len(states)} 个 skills，{sum(sum(row.values()) for row in states.values())} 个启用状态。")
             return 0
         if args.enable or args.disable:
             agent, skill = args.enable or args.disable

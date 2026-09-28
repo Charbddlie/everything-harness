@@ -1,9 +1,11 @@
 """Filesystem operations are the source of truth; SQLite records the result."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 from uuid import uuid4
 
@@ -77,35 +79,35 @@ def create_link(source: Path, target: Path, *, backup_existing: bool = False) ->
     return message
 
 
+def destination_path(target: Path, sources: Path) -> Path:
+    """Resolve parent aliases without following or overwriting a source link."""
+    destination = target.parent.resolve() / target.name
+    sources = sources.resolve()
+    if destination == sources or destination in sources.parents or sources in destination.parents:
+        raise ValueError(f"安装目标不能与源目录重叠：{target}")
+    return destination
+
+
+def remove_target(target: Path, sources: Path) -> None:
+    destination = destination_path(target, sources)
+    if target.is_symlink():
+        target.unlink()
+    elif target.is_dir():
+        # rmtree removes Windows junctions without traversing their contents.
+        shutil.rmtree(destination)
+    else:
+        target.unlink(missing_ok=True)
+
+
 class Manager:
     def __init__(self, root: Path, home: Path | None = None):
         self.root = root.resolve()
         self.sources = self.root / "content"
         self.agents = agent_paths(home or Path.home())
+        self.copy_mode = os.name == "nt"
 
-    def discover(self) -> list[str]:
-        if not self.sources.is_dir():
-            raise ValueError(f"Skill 源目录不存在：{self.sources}")
-        return sorted(
-            path.name for path in self.sources.iterdir()
-            if not path.name.startswith(".") and (path / "SKILL.md").is_file()
-        )
-
-    def sync(self) -> dict[str, dict[str, bool]]:
-        names = self.discover()
-        states = {}
-        # Remove only this project's obsolete links, including dangling links.
-        for agent in self.agents.values():
-            if agent.skills.is_dir():
-                for target in agent.skills.iterdir():
-                    if target.name not in names and points_to(target, self.sources / target.name):
-                        target.unlink()
-        for name in names:
-            states[name] = {
-                key: points_to(agent.skills / name, self.sources / name)
-                for key, agent in self.agents.items()
-            }
-
+    @contextmanager
+    def database(self):
         connection = sqlite3.connect(self.root / "skills.db")
         try:
             connection.execute("PRAGMA foreign_keys = ON")
@@ -119,20 +121,95 @@ class Manager:
                         PRIMARY KEY (skill, agent)
                     )
                 """)
-                known = {row[0] for row in connection.execute("SELECT name FROM skills")}
-                connection.executemany("DELETE FROM skills WHERE name = ?", [(name,) for name in known - set(names)])
-                connection.executemany("INSERT OR IGNORE INTO skills VALUES (?)", [(name,) for name in names])
-                connection.executemany(
-                    "INSERT OR REPLACE INTO skill_agents (skill, agent, enabled) VALUES (?, ?, ?)",
-                    [(name, agent, int(enabled)) for name, agents in states.items() for agent, enabled in agents.items()],
-                )
+                connection.execute("CREATE TABLE IF NOT EXISTS copies (path TEXT PRIMARY KEY)")
+                yield connection
         finally:
             connection.close()
+
+    def copied_paths(self) -> set[Path]:
+        with self.database() as connection:
+            return {Path(row[0]) for row in connection.execute("SELECT path FROM copies")}
+
+    def copy(self, source: Path, target: Path) -> str:
+        destination_path(target, self.sources)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            # Finish reading the source before replacing the installed copy.
+            if source.is_dir():
+                shutil.copytree(source, temporary)
+            else:
+                shutil.copy2(source, temporary)
+            remove_target(target, self.sources)
+            temporary.replace(target)
+            with self.database() as connection:
+                connection.execute("INSERT OR IGNORE INTO copies VALUES (?)", (str(target),))
+        finally:
+            remove_target(temporary, self.sources)
+        return f"复制 {source} -> {target}"
+
+    def discover(self) -> list[str]:
+        if not self.sources.is_dir():
+            raise ValueError(f"Skill 源目录不存在：{self.sources}")
+        return sorted(
+            path.name for path in self.sources.iterdir()
+            if not path.name.startswith(".") and (path / "SKILL.md").is_file()
+        )
+
+    def sync(self) -> dict[str, dict[str, bool]]:
+        names = self.discover()
+        states = {}
+        with self.database() as connection:
+            copies = {Path(row[0]) for row in connection.execute("SELECT path FROM copies")}
+            for target in list(copies):
+                if not target.exists() or target.is_symlink():
+                    copies.remove(target)
+                    connection.execute("DELETE FROM copies WHERE path = ?", (str(target),))
+            # Remove only this project's obsolete installations.
+            for agent in self.agents.values():
+                if agent.skills.is_dir():
+                    for target in agent.skills.iterdir():
+                        owned = points_to(target, self.sources / target.name) or (self.copy_mode and target in copies)
+                        if target.name not in names and owned:
+                            remove_target(target, self.sources)
+                            copies.discard(target)
+                            connection.execute("DELETE FROM copies WHERE path = ?", (str(target),))
+            for name in names:
+                states[name] = {
+                    key: points_to(agent.skills / name, self.sources / name) or (
+                        self.copy_mode and agent.skills / name in copies and (agent.skills / name / "SKILL.md").is_file()
+                    )
+                    for key, agent in self.agents.items()
+                }
+            known = {row[0] for row in connection.execute("SELECT name FROM skills")}
+            connection.executemany("DELETE FROM skills WHERE name = ?", [(name,) for name in known - set(names)])
+            connection.executemany("INSERT OR IGNORE INTO skills VALUES (?)", [(name,) for name in names])
+            connection.executemany(
+                "INSERT OR REPLACE INTO skill_agents (skill, agent, enabled) VALUES (?, ?, ?)",
+                [(name, agent, int(enabled)) for name, agents in states.items() for agent, enabled in agents.items()],
+            )
         return states
 
     def installed_agents(self) -> list[str]:
+        copies = self.copied_paths() if self.copy_mode else set()
         return [key for key, agent in self.agents.items()
-                if points_to(agent.instructions, self.sources / "AGENTS.md")]
+                if points_to(agent.instructions, self.sources / "AGENTS.md") or (
+                    agent.instructions in copies and agent.instructions.is_file()
+                )]
+
+    def update(self) -> dict[str, dict[str, bool]]:
+        states = self.sync()
+        if self.copy_mode:
+            try:
+                for agent in self.installed_agents():
+                    self._instructions(agent)
+                for name, agents in states.items():
+                    for agent, enabled in agents.items():
+                        if enabled:
+                            self._skill(agent, name, True)
+            finally:
+                states = self.sync()
+        return states
 
     def _validate(self, agents: list[str], skills: list[str]) -> None:
         unknown_agents = set(agents) - self.agents.keys()
@@ -146,16 +223,20 @@ class Manager:
         source = self.sources / "AGENTS.md"
         if not source.is_file():
             raise ValueError(f"公共规则文件不存在：{source}")
+        if self.copy_mode:
+            return self.copy(source, self.agents[agent].instructions)
         return create_link(source, self.agents[agent].instructions, backup_existing=True)
 
     def _skill(self, agent: str, skill: str, enabled: bool) -> str | None:
         source = self.sources / skill
         target = self.agents[agent].skills / skill
         if enabled:
+            if self.copy_mode:
+                return self.copy(source, target)
             return create_link(source, target)
-        if points_to(target, source):
-            target.unlink()
-            return f"移除链接 {target}"
+        if points_to(target, source) or (self.copy_mode and target in self.copied_paths()):
+            remove_target(target, self.sources)
+            return f"移除 {target}"
         return None
 
     def set_enabled(self, agent: str, skill: str, enabled: bool) -> list[str]:
@@ -180,6 +261,6 @@ class Manager:
                 for skill in self.discover():
                     messages.append(self._skill(agent, skill, skill in skills))
         finally:
-            # A failed operation must still leave the DB describing actual links.
+            # A failed operation must still leave the DB describing actual files.
             self.sync()
         return [message for message in messages if message]

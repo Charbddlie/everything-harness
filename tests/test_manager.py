@@ -9,7 +9,7 @@ from unittest.mock import patch
 from tui.manager import Manager, create_link, points_to
 
 
-class ManagerTests(unittest.TestCase):
+class ManagerTestCase(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="harness test ")
         self.addCleanup(self.temporary.cleanup)
@@ -48,6 +48,12 @@ class ManagerTests(unittest.TestCase):
                 self.skipTest("Windows requires Developer Mode or administrator privileges for symlinks")
             raise
         probe.unlink()
+
+
+class ManagerTests(ManagerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.manager.copy_mode = False
 
     def test_install_is_repeatable_and_backs_up_only_instructions(self):
         self.require_symlinks()
@@ -225,6 +231,150 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_link(source, source, backup_existing=True)
         self.assertEqual(source.read_text(), "shared rules")
+
+
+class CopyManagerTests(ManagerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.manager.copy_mode = True
+
+    def test_install_overwrites_without_backups_or_symlink_permissions(self):
+        source = self.root / "content/one"
+        (source / "scripts").mkdir()
+        (source / "scripts/run.py").write_text("print('hello')")
+        (self.root / "content/AGENTS.md").write_text("")
+        for agent in self.manager.agents.values():
+            agent.instructions.parent.mkdir(parents=True)
+            agent.instructions.write_text("old rules")
+            (agent.skills / "one").mkdir(parents=True)
+            (agent.skills / "one/old.txt").write_text("obsolete")
+        with patch.object(Path, "symlink_to", side_effect=AssertionError("must copy")):
+            self.manager.install(list(self.manager.agents), ["one", "two"])
+            self.manager.install(list(self.manager.agents), ["one", "two"])
+        for agent in self.manager.agents.values():
+            self.assertFalse(agent.instructions.is_symlink())
+            self.assertEqual(agent.instructions.read_text(), "")
+            self.assertFalse((agent.skills / "one").is_symlink())
+            self.assertEqual((agent.skills / "one/scripts/run.py").read_text(), "print('hello')")
+            self.assertFalse((agent.skills / "one/old.txt").exists())
+        self.assertFalse(list(self.base.rglob("*.bak-*")))
+        self.assertTrue(all(row[2] == 1 for row in self.rows()))
+
+    def test_update_refreshes_copies_and_rules_in_a_new_process(self):
+        source = self.root / "content/one"
+        (source / "old.txt").write_text("old")
+        self.manager.install(["codex"], ["one"])
+        (source / "old.txt").unlink()
+        (source / "new.txt").write_text("new")
+        (source / "SKILL.md").write_text("updated skill")
+        (self.root / "content/AGENTS.md").write_text("updated rules")
+        self.add_skill("new")
+        manager = Manager(self.root, self.base / "home")
+        manager.copy_mode = True
+        states = manager.update()
+        agent = manager.agents["codex"]
+        self.assertEqual((agent.skills / "one/SKILL.md").read_text(), "updated skill")
+        self.assertEqual((agent.skills / "one/new.txt").read_text(), "new")
+        self.assertFalse((agent.skills / "one/old.txt").exists())
+        self.assertEqual(agent.instructions.read_text(), "updated rules")
+        self.assertTrue(states["one"]["codex"])
+        self.assertFalse(any(states["new"].values()))
+        self.assertFalse(any(states["two"].values()))
+
+    def test_disable_and_selection_only_remove_managed_copies(self):
+        self.manager.install(["claude", "codex"], ["one", "two"])
+        self.manager.install(["claude"], ["one"])
+        self.manager.set_enabled("codex", "one", False)
+        states = self.manager.sync()
+        self.assertTrue(states["one"]["claude"])
+        self.assertFalse(states["two"]["claude"])
+        self.assertFalse(states["one"]["codex"])
+        self.assertTrue(states["two"]["codex"])
+        unmanaged = self.manager.agents["copilot"].skills / "one"
+        unmanaged.mkdir(parents=True)
+        (unmanaged / "SKILL.md").write_text("someone else's skill")
+        self.manager.set_enabled("copilot", "one", False)
+        self.manager.update()
+        self.assertEqual((unmanaged / "SKILL.md").read_text(), "someone else's skill")
+        self.assertTrue((self.root / "content/one/SKILL.md").is_file())
+        self.assertTrue(self.manager.agents["codex"].instructions.is_file())
+        self.manager.set_enabled("codex", "one", True)
+        self.assertTrue(self.manager.sync()["one"]["codex"])
+
+    def test_update_reconciles_manual_deletion_and_removed_sources(self):
+        self.manager.install(["codex"], ["one", "two"])
+        agent = self.manager.agents["codex"]
+        shutil.rmtree(agent.skills / "one")
+        shutil.rmtree(self.root / "content/two")
+        states = self.manager.update()
+        self.assertFalse(states["one"]["codex"])
+        self.assertNotIn("two", states)
+        self.assertFalse((agent.skills / "one").exists())
+        self.assertFalse((agent.skills / "two").exists())
+        self.assertEqual(self.manager.copied_paths(), {agent.instructions})
+
+    def test_missing_skill_md_disables_copy_or_removes_obsolete_install(self):
+        self.manager.install(["codex"], ["one", "two"])
+        agent = self.manager.agents["codex"]
+        (agent.skills / "one/SKILL.md").unlink()
+        (self.root / "content/two/SKILL.md").unlink()
+        states = self.manager.update()
+        self.assertFalse(states["one"]["codex"])
+        self.assertFalse((agent.skills / "one/SKILL.md").exists())
+        self.assertNotIn("two", states)
+        self.assertFalse((agent.skills / "two").exists())
+
+    def test_rules_only_install_can_be_updated(self):
+        shutil.rmtree(self.root / "content/one")
+        shutil.rmtree(self.root / "content/two")
+        self.manager.install(["claude"], [])
+        (self.root / "content/AGENTS.md").write_text("changed")
+        self.assertEqual(self.manager.update(), {})
+        self.assertEqual(self.manager.agents["claude"].instructions.read_text(), "changed")
+
+    def test_copy_failure_preserves_previous_install_and_syncs_state(self):
+        self.manager.install(["codex"], ["one"])
+        target = self.manager.agents["codex"].skills / "one"
+        previous = (target / "SKILL.md").read_text()
+        (self.root / "content/one/SKILL.md").write_text("new content")
+        with patch("tui.manager.shutil.copytree", side_effect=PermissionError("locked")):
+            with self.assertRaises(PermissionError):
+                self.manager.install(["codex"], ["one", "two"])
+        self.assertEqual((target / "SKILL.md").read_text(), previous)
+        self.assertIn(("one", "codex", 1), self.rows())
+        self.assertIn(("two", "codex", 0), self.rows())
+        self.assertFalse(list(target.parent.glob("*.tmp")))
+
+    def test_copy_rejects_targets_overlapping_sources(self):
+        source = self.root / "content/one"
+        for target in (source, source / "nested", self.root):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                self.manager.copy(source, target)
+        self.assertTrue((source / "SKILL.md").is_file())
+
+    def test_legacy_database_is_upgraded_without_claiming_unmanaged_copies(self):
+        self.manager.sync()
+        with self.manager.database() as connection:
+            connection.execute("DROP TABLE copies")
+            connection.execute("UPDATE skill_agents SET enabled = 1")
+        target = self.manager.agents["codex"].skills / "one"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("unmanaged")
+        self.manager.update()
+        self.assertTrue(all(row[2] == 0 for row in self.rows()))
+        self.assertEqual((target / "SKILL.md").read_text(), "unmanaged")
+
+    def test_update_converts_existing_project_links_to_copies(self):
+        self.require_symlinks()
+        self.manager.copy_mode = False
+        self.manager.install(["codex"], ["one"])
+        self.manager.copy_mode = True
+        self.manager.update()
+        agent = self.manager.agents["codex"]
+        self.assertFalse(agent.instructions.is_symlink())
+        self.assertFalse((agent.skills / "one").is_symlink())
+        self.assertEqual((agent.skills / "one/SKILL.md").read_text(), (self.root / "content/one/SKILL.md").read_text())
+        self.assertEqual(agent.instructions.read_text(), "shared rules")
 
 
 if __name__ == "__main__":

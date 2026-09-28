@@ -75,6 +75,17 @@ class CliTests(unittest.TestCase):
             rows = connection.execute("SELECT enabled FROM skill_agents").fetchall()
         self.assertEqual(rows, [(0,)] * 6)
 
+    def test_copy_install_update_and_disable_without_a_terminal(self):
+        self.manager.copy_mode = True
+        self.assertEqual(self.run_cli("--non-interactive", "--agents", "codex", "--skills", "one"), 0)
+        target = self.manager.agents["codex"].skills / "one"
+        self.assertFalse(target.is_symlink())
+        (self.root / "content/one/SKILL.md").write_text("changed")
+        self.assertEqual(self.run_cli("--update"), 0)
+        self.assertEqual((target / "SKILL.md").read_text(), "changed")
+        self.assertEqual(self.run_cli("--disable", "codex", "one"), 0)
+        self.assertFalse(target.exists())
+
     def test_install_failure_returns_nonzero_without_starting_tui(self):
         with patch.object(self.manager, "install", side_effect=OSError("permission denied")):
             self.assertEqual(self.run_cli("--non-interactive", "--agents", "codex"), 1)
