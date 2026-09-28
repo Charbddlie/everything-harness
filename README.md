@@ -22,22 +22,18 @@ export all_proxy=http://127.0.0.1:7890
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-在 node 命令末尾追加 `--update` 可覆盖更新（Windows 放在外层双引号内）：
-
-```powershell
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
-```
+每次运行都会覆盖安装开启自动同步的 skill。修改自有 skill 后，先推送源码，再运行同一条命令同步。
 
 所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex 和 GitHub Copilot**；Claude Code 可手动添加，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
-- 普通运行只同步生效 `auto_sync=true` 的 skill，全局补齐缺失的 skill / agent 组合，已安装的跳过。
-- `--update` 仅重装开启自动同步且匹配目标的 skill，不运行无范围限制的全局更新。
-- 安装或更新后，运行本次选中的所有 skill 的 `dryrun.mjs`，包括已安装而跳过的 skill。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
+- 普通运行对生效 `auto_sync=true` 的 skill 按来源分组，调用 `skills add --copy`，覆盖安装到全部生效 agents。自有和第三方 skill 使用相同流程。
+- 覆盖安装会替换安装目录中的本地修改；源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
+- 安装后，运行本次选中的所有 skill 的 `dryrun.mjs`。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
 - `--dryrun` 只检查开启自动同步的 skill，不安装、不更新；修复环境后可反复运行。
 - 无 dryrun 的纯说明 skill 会跳过检查。自有 skill 包含脚本却缺少 dryrun 会报错；第三方若提供 `dryrun.mjs`，同样执行。
 - 来源冲突会在安装前报错；旧安装器留下的无来源记录允许通过显式安装接管。
 
-安装方式采用 `skills` 的默认行为，脚本不直接编辑 harness 配置、链接或 skills 锁文件。Codex 和 Copilot 共用 `~/.agents/skills`，所以内容可能同时对两者可见。脚本根据 CLI 返回的路径识别共享安装，避免应用配置目录尚不存在时反复安装。
+安装使用 `skills` 的 `--copy` 模式，创建实体 skill 目录。目录选择、下载、复制和锁文件均交给 `skills`；同步脚本不比较内容哈希。Codex 和 Copilot 共用 `~/.agents/skills`，所以内容可能同时对两者可见。已有父目录软链接保持原状，迁移目录需单独处理。
 
 ## 增加、删除和列出清单
 
@@ -68,7 +64,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 删除按生效 agents 执行，共享目录是否保留由 CLI 根据本机 agent 检测结果决定。如果 CLI 因其他 agent 仍在使用而保留目标目录，且目标仍可访问它，删除检查会报错，不创建清单 commit。
 
-普通同步不会自动清理清单外的 skill；手动移除但仍开启自动同步的项目会在下次同步时补回。`--add`、`--del`、`--auto_sync`、`--add_agents`、`--del_agents`、`--list`、`--update`、`--dryrun` 互斥。
+普通同步不会自动清理清单外的 skill；手动移除但仍开启自动同步的项目会在下次同步时补回。`--add`、`--del`、`--auto_sync`、`--add_agents`、`--del_agents`、`--list`、`--dryrun` 互斥。
 
 ## 全局 agents
 
@@ -90,7 +86,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/skills.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。
 
-`agents: []` 表示没有目标，普通同步、更新和 dryrun 都会跳过。此时 skill 的 add/del 会提示先设置 agent，不修改安装或 skill 清单。
+`agents: []` 表示没有目标，普通同步和 dryrun 都会跳过。此时 skill 的 add/del 会提示先设置 agent，不修改安装或 skill 清单。
 
 ## 自动同步与本机选择
 
@@ -180,7 +176,7 @@ AGENTS.md
 node skills/paper-read/dryrun.mjs
 ```
 
-解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行 `--update`。
+解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行远程同步入口。
 
 ## 验证
 

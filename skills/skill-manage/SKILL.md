@@ -19,9 +19,10 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-默认同步开启 `auto_sync` 的 skill，并检查环境。本机 `~/.everything-harness/skills.json` 中的开关优先，没有本机记录就跟随远程。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
+每次运行都通过 `skills add --copy` 覆盖安装开启 `auto_sync` 的 skill，并检查环境。安装使用实体 skill 目录，目录选择与锁文件由 `skills` 管理。已有父目录软链接需另行迁移。覆盖安装会替换本地修改，源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
 
-- `--update`：覆盖更新。
+本机 `~/.everything-harness/skills.json` 中的开关优先，没有本机记录就跟随远程。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
+
 - `--add owner/repo skill-name`：先安装并检查环境，成功后加入远程清单。
 - `--del skill-name`：先删除本机安装，成功后从远程清单移除。
 - `--auto_sync false skill-name`：关闭远程自动同步；换成 `true` 即开启。只改开关，不安装或删除。
@@ -38,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 skill 增加、删除均使用生效的全局 agents，开关按整个 skill 生效。本机 add 只接收已在远程清单中的名称。
 `--del` 不删除仓库中的 skill 源码；如果用户要求连远程源码一起删除，需明确该范围后再修改仓库。
 
-agents 增删只保存配置，下次同步生效，已有安装保留。本机首次修改从当前生效列表增删，保存后整份列表覆盖远程；移除本机 `skills.json` 顶层 `agents` 字段即可恢复跟随远程。空列表会暂停同步、更新和 dryrun，skill add/del 会提示先添加 agent。Codex 和 Copilot 共用 skills 目录，内容可能对两者都可见。
+agents 增删只保存配置，下次同步生效，已有安装保留。本机首次修改从当前生效列表增删，保存后整份列表覆盖远程；移除本机 `skills.json` 顶层 `agents` 字段即可恢复跟随远程。空列表会暂停同步和 dryrun，skill add/del 会提示先添加 agent。Codex 和 Copilot 共用 `~/.agents/skills`，内容可能对两者都可见。
 
 例如，增加一个 skill：
 
@@ -58,13 +59,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot"
 ```
 
-更新所有开启自动同步的 skill：
-
-```powershell
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
-```
-
 修改用户自有 skill 时，先克隆源码仓库：`git clone git@github.com:Charbddlie/everything-harness.git`；已有本地仓库则复用。
 在 `skills/<skill-name>/` 中修改内容；涉及脚本时同步维护 `dryrun.mjs`。
 将本机 skill 发布到远程时，只迁入说明、脚本和必要资源，不提交 `key.env`、密钥、缓存或本机配置。先推送源码，再用 `--add Charbddlie/everything-harness skill-name` 安装并加入远程清单。
-完成后提交并推送，再运行远程入口的 `--update` 同步安装。
+完成后提交并推送，再运行远程入口同步安装。

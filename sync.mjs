@@ -8,7 +8,7 @@ export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/skills.json`;
 export const AGENTS = new Map([['claude-code', 'Claude Code'], ['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
 const SHARED_AGENTS = ['codex', 'github-copilot'];
-const USAGE = `node sync.mjs [--update | --dryrun | --list]
+const USAGE = `node sync.mjs [--dryrun | --list]
 node sync.mjs --add <owner/repo> <skill> ...
 node sync.mjs --del <skill> ...
 node sync.mjs --auto_sync <true|false> <skill> ...
@@ -50,7 +50,7 @@ export function parseArgs(args) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
     if (arg === '--local' && !options.local) { options.local = true; continue; }
-    if (['--add', '--del', '--list', '--update', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
+    if (['--add', '--del', '--list', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
       options.mode = arg.slice(2);
       if (['--add', '--del', '--auto_sync', '--add_agents', '--del_agents'].includes(arg)) {
         while (i + 1 < args.length && !args[i + 1].startsWith('-')) values.push(args[++i]);
@@ -178,14 +178,10 @@ function hasAgent(entry, agent, sharedSkillsDir) {
     || (SHARED_AGENTS.includes(agent) && relative(sharedSkillsDir, dirname(entry.path)) === ''));
 }
 
-function installationJobs(entries, installed, update, sharedSkillsDir, targets) {
-  checkSources(entries, installed);
+function installationJobs(entries, agents) {
   const jobs = new Map();
   for (const entry of entries) {
-    const current = installed.get(entry.name);
-    const agents = update || !current?.source ? targets : targets.filter((agent) => !hasAgent(current, agent, sharedSkillsDir));
-    if (!agents.length) continue;
-    const key = `${entry.source.toLowerCase()}:${agents.join(',')}`;
+    const key = entry.source.toLowerCase();
     if (!jobs.has(key)) jobs.set(key, { source: entry.source, names: [], agents });
     jobs.get(key).names.push(entry.name);
   }
@@ -264,13 +260,14 @@ export function containsScripts(path) {
   });
 }
 
-function install(entries, { runSkills, installed, update = false, sharedSkillsDir, agents, log }) {
-  const jobs = installationJobs(entries, installed, update, sharedSkillsDir, agents);
+function install(entries, { runSkills, installed, agents, log }) {
+  checkSources(entries, installed);
+  const jobs = installationJobs(entries, agents);
   for (const job of jobs) {
     const label = `${job.source} / ${job.names.join(', ')} → ${job.agents.join(', ')}`;
-    log(`${update ? '更新' : '安装'}：${label}`);
+    log(`覆盖安装：${label}`);
     try {
-      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, '-g', '--yes', '--json']), 'skills add');
+      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, '-g', '--yes', '--copy', '--json']), 'skills add');
       check(Array.isArray(results), 'skills add 应返回数组。');
       for (const name of job.names) {
         const result = results.find((item) => item?.name === name);
@@ -281,7 +278,6 @@ function install(entries, { runSkills, installed, update = false, sharedSkillsDi
       }
     } catch (error) { throw new Error(`${label} 失败：${error.message}`); }
   }
-  return jobs.length;
 }
 
 function remove(entries, context) {
@@ -378,7 +374,8 @@ function manageManifest(options, dependencies, log) {
   try {
     log('正在准备远程清单…');
     // A fresh checkout isolates publication from any user working tree.
-    git(['init', '--quiet', '-b', 'main']);
+    git(['init', '--quiet']);
+    git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     const sources = dependencies.repositoryUrl ? [dependencies.repositoryUrl]
       : [`https://github.com/${OWN_SOURCE}.git`, `git@github.com:${OWN_SOURCE}.git`];
     const errors = [];
@@ -458,7 +455,7 @@ export function sync(args, dependencies = {}) {
     listCatalog(manifest, local, log);
     return;
   }
-  if (options.mode === 'sync' || options.mode === 'update') {
+  if (options.mode === 'sync') {
     initializeLocalSettings(local);
   }
   entries = entries.filter((entry) => enabledSkill(entry, local));
@@ -467,10 +464,9 @@ export function sync(args, dependencies = {}) {
   if (!agents.length) { log('生效 agents 为空，无需安装或检查。'); return; }
   const context = makeContext(dependencies, log, agents);
   checkSources(entries, context.installed);
-  let jobs = 0;
-  if (options.mode !== 'dryrun') jobs = install(entries, { ...context, update: options.mode === 'update' });
+  if (options.mode !== 'dryrun') install(entries, context);
   (dependencies.runDryruns ?? runDryruns)(entries, context.installed, { log, env: dependencies.env });
-  log(options.mode === 'dryrun' ? '环境检查完成。' : jobs ? '同步和环境检查完成。' : '均已安装，环境检查完成。');
+  log(options.mode === 'dryrun' ? '环境检查完成。' : '覆盖同步和环境检查完成。');
 }
 
 if (import.meta.main) {

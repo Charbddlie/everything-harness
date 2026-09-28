@@ -58,34 +58,34 @@ function harness({ manifest = catalog, installed = [], failure, result, dryrun }
   };
 }
 
-test('first installation, repeated skip, and dryrun on every selected skill', () => {
+test('every sync reinstalls selected skills in copy mode and runs dryrun', () => {
   const fixture = harness(); fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
   fixture.run();
-  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 1);
+  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
   assert.equal(fixture.events.filter((event) => event === 'dryrun').length, 2);
   assert.equal(fixture.events.filter((event) => event === 'fetch').length, 2);
 });
 
-test('sync fills missing targets until all three agents are covered', () => {
+test('sync reinstalls all targets including previously installed agents', () => {
   const fixture = harness({ installed: [record('one', ['codex']), record('two', ['claude-code', 'github-copilot'])] });
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', '--agent', 'claude-code', 'github-copilot', '-g', '--yes', '--json']);
-  assert.deepEqual(fixture.calls[2], ['add', 'example/skills', '--skill', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
   fixture.run();
   assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
 });
 
-test('shared paths cover undetected Codex and Copilot apps', () => {
+test('shared installations are overwritten even when Codex and Copilot apps are undetected', () => {
   const shared = join(tmpdir(), 'shared');
   const fixture = harness({ installed: ['one', 'two'].map((name) => ({ ...record(name, ['claude-code']), path: join(shared, name) })) });
   fixture.run([], { sharedSkillsDir: shared });
-  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.calls.length, 2);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
 });
 
-test('update is scoped, source conflicts are checked before installs, untracked records are adopted', () => {
+test('overwrite is scoped, source conflicts are checked before installs, untracked records are adopted', () => {
   const fixture = harness({ installed: [record('one'), record('two'), record('other', agents, 'different/repo')] });
-  fixture.run(['--update']); assert.equal(fixture.calls.length, 2);
+  fixture.run(); assert.equal(fixture.calls.length, 2);
   assert.deepEqual(fixture.calls[1].slice(fixture.calls[1].indexOf('--agent') + 1, fixture.calls[1].indexOf('-g')), agents);
   assert.ok(!fixture.calls[1].includes('other'));
   const conflict = harness({ installed: [record('two', agents, 'other/repo')] });
@@ -94,13 +94,26 @@ test('update is scoped, source conflicts are checked before installs, untracked 
   legacy.run(); assert.deepEqual(legacy.calls[1].slice(2, 4), ['--skill', 'one']);
 });
 
+test('own and third-party skills are grouped by source and overwritten on every sync', () => {
+  const own = 'Charbddlie/everything-harness';
+  const manifest = { agents: ['codex'], skills: [entry('one', own), entry('two'), entry('three', own), entry('disabled', own, false)] };
+  const fixture = harness({ manifest, installed: manifest.skills.map((item) => record(item.name, ['codex'], item.source)) });
+  fixture.run();
+  fixture.run();
+  const installs = fixture.calls.filter((args) => args[0] === 'add');
+  assert.equal(installs.length, 4);
+  assert.deepEqual(installs[0], ['add', own, '--skill', 'one', 'three', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(installs[1], ['add', 'example/skills', '--skill', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(installs.slice(2), installs.slice(0, 2));
+});
+
 test('invalid manifests and arguments fail before install', () => {
   for (const manifest of [null, [], {}, { agents, skills: 'bad' }, { agents, skills: [entry('one'), entry('one')] },
     { agents, skills: [entry('*')] }, { agents, skills: [{ ...entry('one'), agents: ['codex'] }] },
     ...['a/..', 'a/b/tree/main', 'a/b;whoami', 'https://github.com/a/b', '-a/b', 'a/b.git'].map((source) => ({ agents, skills: [entry('one', source)] }))]) {
     const fixture = harness({ manifest }); assert.throws(() => fixture.run()); assert.equal(fixture.calls.length, 0);
   }
-  for (const args of [['--add'], ['--del'], ['--agents'], ['--agents', 'codex', 'codex'], ['--update', '--add', 'a/b', 'one'], ['--wat'], ['--list', '--del', 'one']]) {
+  for (const args of [['--add'], ['--del'], ['--agents'], ['--agents', 'codex', 'codex'], ['--update'], ['--update', '--add', 'a/b', 'one'], ['--wat'], ['--list', '--del', 'one']]) {
     assert.throws(() => parseArgs(args));
   }
   assert.deepEqual(validateManifest({ agents, skills: [] }), { agents, skills: [] });
@@ -110,20 +123,20 @@ const localPath = (fixture) => join(fixture.dependencies.stateDir, 'skills.json'
 const localManifest = (fixture) => JSON.parse(readFileSync(localPath(fixture), 'utf8'));
 const setLocal = (fixture, skills) => writeFileSync(localPath(fixture), JSON.stringify({ skills }, null, 2) + '\n');
 
-test('global remote targets apply to every skill and changes fill only newly selected agents', () => {
+test('global remote targets apply to every skill on every sync', () => {
   const manifest = { ...catalog, agents: ['codex'] };
   const fixture = harness({ manifest });
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
   fixture.run();
-  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 1);
+  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
   manifest.agents.push('claude-code');
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', 'claude-code', '-g', '--yes', '--copy', '--json']);
   assert.deepEqual(localManifest(fixture), { skills: [] });
 });
 
-test('local global agents replace remote targets for sync, update, add and del while keeping skill overrides', () => {
+test('local global agents replace remote targets for sync, add and del while keeping skill overrides', () => {
   const manifest = { ...catalog, agents: ['codex'] };
   const fixture = harness({ manifest });
   setLocal(fixture, [entry('one', 'example/skills', false)]);
@@ -133,12 +146,12 @@ test('local global agents replace remote targets for sync, update, add and del w
   assert.equal(fixture.calls.length, 0);
   assert.deepEqual(localManifest(fixture), { agents: ['claude-code'], skills: [entry('one', 'example/skills', false)] });
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
   manifest.agents.push('github-copilot');
-  fixture.run(['--update']);
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  fixture.run();
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
   fixture.run(['--local', '--add', 'one']);
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
   fixture.installed.find((item) => item.name === 'one').agents.push('Codex');
   fixture.run(['--local', '--del', 'one']);
   assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'one', '-g', '--yes', '--agent', 'claude-code']);
@@ -152,7 +165,7 @@ test('empty global targets disable operations without removing installations; ag
   const fixture = harness({ installed: [record('one')] });
   fixture.run(['--local', '--del_agents', ...agents]);
   assert.deepEqual(localManifest(fixture), { agents: [], skills: [] });
-  for (const args of [[], ['--update'], ['--dryrun']]) fixture.run(args);
+  for (const args of [[], ['--dryrun']]) fixture.run(args);
   fixture.run(['--list']);
   assert.ok(fixture.logs.some((line) => line.includes('本机 agents：无\n生效 agents：无')));
   assert.equal(fixture.calls.length, 0);
@@ -161,7 +174,7 @@ test('empty global targets disable operations without removing installations; ag
   assert.equal(fixture.calls.length, 0);
   fixture.run(['--local', '--add_agents', 'codex']);
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
   const emptyRemote = harness({ manifest: { ...catalog, agents: [] } });
   emptyRemote.run();
   assert.equal(emptyRemote.calls.length, 0);
@@ -182,7 +195,7 @@ test('invalid global agents and agent arguments fail before any skill operation'
     ['--add_agents', 'codex', '--del_agents', 'claude-code'], ['--add_agents', 'codex', '--update']]) assert.throws(() => parseArgs(args));
 });
 
-test('auto_sync defaults and local overrides control sync, update and dryrun; sync preserves overrides', () => {
+test('auto_sync defaults and local overrides control repeated sync and dryrun', () => {
   const manifest = { agents, skills: [entry('one'), entry('two', 'example/skills', false), entry('three')] };
   const fixture = harness({ manifest });
   setLocal(fixture, [entry('one', 'example/skills', false), entry('two')]);
@@ -191,7 +204,7 @@ test('auto_sync defaults and local overrides control sync, update and dryrun; sy
   fixture.dependencies.runDryruns = (entries) => checked.push(entries.map((item) => item.name));
   fixture.run();
   assert.deepEqual(fixture.calls[1].slice(3, 5), ['two', 'three']);
-  fixture.run(['--update']);
+  fixture.run();
   assert.deepEqual(fixture.calls.at(-1).slice(3, 5), ['two', 'three']);
   fixture.run(['--dryrun']);
   assert.deepEqual(checked, [['two', 'three'], ['two', 'three'], ['two', 'three']]);
@@ -214,7 +227,7 @@ test('old per-skill local agents are ignored while sync overrides are retained',
   const fixture = harness();
   setLocal(fixture, [{ ...entry('one', 'example/skills', false), agents: ['codex'] }, { ...entry('two'), agents: ['codex'] }]);
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
   fixture.run(['--local', '--auto_sync', 'false', 'two']);
   assert.equal(localManifest(fixture).skills[0].auto_sync, false);
   assert.ok(localManifest(fixture).skills.every((item) => !Object.hasOwn(item, 'agents')));
@@ -350,9 +363,11 @@ test('dryruns print one result per skill and preserve failure reasons without du
 
 function repository(t, manifest = { agents, skills: [entry('one')] }) {
   const base = temporary(t), root = join(base, 'local'), remote = join(base, 'remote.git'); mkdirSync(root);
-  runCommand('git', ['init', '--bare', '--initial-branch=main', remote]);
+  runCommand('git', ['init', '--bare', remote]);
+  runCommand('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   const git = (args) => runCommand('git', args, { cwd: root });
-  git(['init', '-b', 'main']); git(['config', 'user.name', 'Skill Test']); git(['config', 'user.email', 'test@example.invalid']);
+  git(['init']); git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  git(['config', 'user.name', 'Skill Test']); git(['config', 'user.email', 'test@example.invalid']);
   git(['config', 'core.hooksPath', join(base, 'no-hooks')]); git(['config', 'commit.gpgsign', 'false']);
   writeFileSync(join(root, 'skills.json'), JSON.stringify(manifest, null, 2) + '\n');
   writeFileSync(join(root, 'sync.mjs'), '// test repository\n');
@@ -400,7 +415,7 @@ test('remote skill add and del use local global targets and preserve other agent
   const options = managed(repository(t)), fixture = harness();
   fixture.run(['--local', '--del_agents', 'codex', 'github-copilot']);
   fixture.run(['--add', 'third/repo', 'two'], options);
-  assert.deepEqual(fixture.calls.find((args) => args[0] === 'add'), ['add', 'third/repo', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  assert.deepEqual(fixture.calls.find((args) => args[0] === 'add'), ['add', 'third/repo', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
   fixture.installed.find((item) => item.name === 'two').agents.push('Codex');
   fixture.run(['--del', 'two'], options);
   assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'two', '-g', '--yes', '--agent', 'claude-code']);
@@ -486,7 +501,7 @@ test('commit or push failures preserve work; rerunning the same command publishe
   assert.ok(saved.every((folder) => JSON.parse(readFileSync(join(options.tempDir, folder, 'skills.json'))).skills.length === 2));
   fixture.run(['--add', 'third/repo', 'two'], options);
   assert.equal(remoteManifest(options).skills.length, 2);
-  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 1);
+  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 3);
 });
 
 test('dirty user checkouts do not affect remote management; deleting removes the whole record', (t) => {

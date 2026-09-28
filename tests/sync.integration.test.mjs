@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createSkillsRunner, runCommand, runDryruns, sync } from '../sync.mjs';
 
-test('real npx skills discovery, global installation, missing agents and update in an isolated profile', {
+test('real npx skills copy installation and repeated overwrite in an isolated profile', {
   skip: process.env.SKILLS_INTEGRATION !== '1',
   timeout: 240_000,
 }, (t) => {
@@ -38,7 +38,7 @@ test('real npx skills discovery, global installation, missing agents and update 
   cpSync(new URL('../skills/pdf-analyze/scripts/', import.meta.url), join(skill, 'scripts'), { recursive: true });
   cpSync(new URL('../skills/pdf-analyze/dryrun.mjs', import.meta.url), join(skill, 'dryrun.mjs'));
   writeFileSync(join(skill, 'SKILL.md'), `${skillText}\nVersion one\n`);
-  const installArgs = ['add', source, '--skill', 'pdf-analyze', '--agent', 'codex', '-g', '--yes', '--json'];
+  const installArgs = ['add', source, '--skill', 'pdf-analyze', '--agent', 'codex', '-g', '--yes', '--copy', '--json'];
   const first = JSON.parse(runSkills(installArgs));
   assert.equal(first[0].status, 'installed');
   assert.deepEqual(first[0].agents, ['Codex']);
@@ -58,12 +58,11 @@ test('real npx skills discovery, global installation, missing agents and update 
   mkdirSync(fixtureSkill);
   writeFileSync(join(fixtureSkill, 'SKILL.md'), '---\nname: pdf\ndescription: Isolated installation test fixture.\n---\n\n# PDF fixture\n');
   env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_GLOBAL = join(sandbox, 'gitconfig');
-  env.GIT_CONFIG_COUNT = '1';
-  env.GIT_CONFIG_KEY_0 = `url.${pathToFileURL(source).href}.insteadOf`;
-  env.GIT_CONFIG_VALUE_0 = 'https://github.com/integration-fixture/skills.git';
+  env.GIT_CONFIG_GLOBAL = join(profile, '.gitconfig');
   const git = (args) => runCommand('git', args, { env, cwd: source });
-  git(['init', '--quiet', '-b', 'main']);
+  git(['config', '--file', env.GIT_CONFIG_GLOBAL, `url.${pathToFileURL(source).href}.insteadOf`, 'https://github.com/integration-fixture/skills.git']);
+  git(['init', '--quiet']);
+  git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
   git(['add', '.']);
   git(['-c', 'user.name=Skill Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'Fixture']);
   const catalog = {
@@ -80,17 +79,32 @@ test('real npx skills discovery, global installation, missing agents and update 
   };
   sync([], dependencies);
   assert.deepEqual(calls.find((args) => args[0] === 'add').slice(5, 8), ['claude-code', 'codex', 'github-copilot']);
+  const sharedPath = join(profile, '.agents', 'skills', 'pdf');
+  const claudePath = join(env.CLAUDE_CONFIG_DIR, 'skills', 'pdf');
+  for (const path of [sharedPath, claudePath]) {
+    assert.equal(lstatSync(path).isSymbolicLink(), false);
+    assert.equal(lstatSync(path).isDirectory(), true);
+  }
+  assert.equal(existsSync(join(env.CODEX_HOME, 'skills', 'pdf')), false);
+  // Publish a new source revision and verify normal sync replaces stale files.
+  writeFileSync(join(fixtureSkill, 'SKILL.md'), '---\nname: pdf\ndescription: Updated installation fixture.\n---\n\nVersion two\n');
+  git(['add', '.']);
+  git(['-c', 'user.name=Skill Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'Update fixture']);
+  writeFileSync(join(sharedPath, 'stale.txt'), 'local stale file');
   // Model an installed Codex app: the CLI preserves shared content on partial
   // removal only when it detects another app that still uses that directory.
   mkdirSync(env.CODEX_HOME, { recursive: true });
   runSkills(['remove', 'pdf', '-g', '--yes', '--agent', 'claude-code']);
   sync([], dependencies); // Restore coverage after one agent is manually removed.
-  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', ...catalog.agents, '-g', '--yes', '--copy', '--json']);
+  for (const path of [sharedPath, claudePath]) {
+    assert.match(readFileSync(join(path, 'SKILL.md'), 'utf8'), /Version two/);
+    assert.equal(lstatSync(path).isSymbolicLink(), false);
+  }
+  assert.equal(existsSync(join(sharedPath, 'stale.txt')), false);
   const addCount = calls.filter((args) => args[0] === 'add').length;
   assert.equal(addCount, 2);
   sync([], dependencies);
-  assert.equal(calls.filter((args) => args[0] === 'add').length, addCount);
-  sync(['--update'], dependencies);
   assert.equal(calls.filter((args) => args[0] === 'add').length, addCount + 1);
   const installed = JSON.parse(runSkills(['list', '-g', '--json']));
   const remote = installed.find((entry) => entry.name === 'pdf');
@@ -101,8 +115,8 @@ test('real npx skills discovery, global installation, missing agents and update 
   const beforeAgentChange = calls.length;
   sync(['--local', '--del_agents', 'codex', 'github-copilot'], dependencies);
   assert.equal(calls.length, beforeAgentChange);
-  sync(['--update'], dependencies);
-  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'claude-code', '-g', '--yes', '--json']);
+  sync([], dependencies);
+  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
   sync(['--local', '--del', 'pdf'], dependencies);
   const shared = JSON.parse(runSkills(['list', '-g', '--json'])).find((entry) => entry.name === 'pdf');
   assert.ok(shared);
