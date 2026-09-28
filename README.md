@@ -1,163 +1,144 @@
 # Everything Harness
 
-管理 Claude Code、Codex、Copilot CLI 的个人 skills 和公共规则：Windows 直接复制，Linux / macOS 使用符号链接。
-只依赖 Python 3.10+ 与 Textual；数据库操作使用 Python 自带的 `sqlite3`。
+个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skills.json`；本机安装、更新和删除交给系统的 `npx skills`。
 
-## 开始使用
+## 安装与检查
 
-把每个 skill 直接放在 `content/<skill_name>/SKILL.md`，脚本和资源也放在对应目录内。
-需要同步的公共规则编辑 `content/AGENTS.md`；根目录 `AGENTS.md` 仅用于本项目开发约定。
-已包含 `content/pdf-analyze/`。MinerU 密钥使用环境变量 `MINERU_API_KEY` 或该 skill 内本机的 `key.env`，密钥文件已忽略提交。
-Skill 由 agent 动态加载，规则只保存在各自的 `SKILL.md`，不追加到 `AGENTS.md`。
-Skill 的脚本使用系统 Python：Windows 使用 `py -3` 或系统 `python`，Linux / macOS 使用系统 `python3`；不使用本项目或其他项目的 venv。
+需要 **Node.js ≥22.20.0、npm/npx、Git 和 curl**。远程安装不需要克隆仓库或发布 npm 包；以下地址在文件推送到公开可访问的 GitHub `main` 后可用。
 
-Windows 只提供一个入口，`install.cmd` 使用 GBK / 代码页 936：
+Windows PowerShell：
 
-```bat
-install.cmd
-install.cmd --update
-install.cmd --enable codex my-skill
-install.cmd --disable claude my-skill
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
 Linux / macOS：
 
 ```sh
-sh install.sh
-sh install.sh --update
-sh install.sh --enable copilot my-skill
-sh install.sh --disable codex my-skill
+curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-无参数运行时，先勾选 harness（三个默认均不选），再勾选 skills（默认全选）。
-列表使用 `[ ]` / `[✓]` 显示状态：↑↓移动、空格勾选、Enter 进入下一步或安装、Esc 返回、Ctrl+C 取消。
-公共规则自动安装，不出现在选择列表中。安装时显示进度；失败原因保留在界面上，可以重试或退出。
-未勾选的 skills 会从所选 agent 移除；未选择的 agent 不受交互安装影响。
-没有 skills 时也能单独安装公共规则。
+在命令末尾追加 `--update` 可覆盖更新，追加 `--agents codex` 可筛选目标。两个参数可以组合，例如：
 
-Agent 或自动化脚本使用非交互模式，必须明确目标 agent：
-
-```bat
-install.cmd --non-interactive --agents codex
-install.cmd --non-interactive --agents claude codex --skills pdf-analyze
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update --agents codex
 ```
 
-Linux / macOS 使用 `sh install.sh` 加相同参数。省略 `--skills` 时安装全部 skills，公共规则自动安装。
-指定 `--skills` 时，所选 agent 中未选中的本项目 skill 副本或链接会被移除；只调整单个 skill 使用 `--enable AGENT SKILL` 或 `--disable AGENT SKILL`。
-安装、启用和禁用都会同步 `skills.db`；`--update` 按实际文件刷新状态，Windows 还会更新已安装的副本。
-`--non-interactive`、`--update`、`--enable`、`--disable` 不能组合使用。
+所有命令使用远程 `main` 的清单。`--agents` 支持 `claude-code`、`codex`、`github-copilot`，只选择清单中适用于这些 agents 的 skill。
 
-脚本先检查项目 `.venv`，不存在就自动创建；首次运行或 `requirements.txt` 改动后安装依赖。
-后续运行复用环境，不重复联网安装。Linux 若缺少 venv 支持，需先安装系统的 `python3-venv`。
+- 普通运行全局安装缺失的 skill / agent 组合，已安装的跳过。
+- `--update` 仅重装清单内指定目标的 skill，不运行无范围限制的全局更新。
+- 安装或更新后，运行本次清单内所有 skill 的 `dryrun.mjs`，包括跳过安装的 skill。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
+- `--dryrun` 只检查已安装的 skill，不安装、不更新；修复环境后可反复运行。
+- 无 dryrun 的纯说明 skill 会跳过检查。自有 skill 包含脚本却缺少 dryrun 会报错；第三方若提供 `dryrun.mjs`，同样执行。
+- 来源冲突会在安装前报错；旧安装器留下的无来源记录允许通过显式安装接管。
 
-Windows **直接复制到当前用户的 agent 目录，不需要管理员权限或开发者模式，不创建备份**。
-修改 `content/` 后运行 `install.cmd --update`，即可更新已安装的 skill 和公共规则副本。
-Python 源码和 Markdown 保持 UTF-8；Windows 入口及其重定向输出默认使用 GBK。
+安装方式采用 `skills` 的默认行为，脚本不直接编辑 harness 配置、链接或 skills 锁文件。Codex 和 Copilot 共用 `~/.agents/skills`，所以内容可能同时对两者可见。脚本根据 CLI 返回的路径识别共享安装，避免应用配置目录尚不存在时反复安装。
 
-## 安装位置
+## 增加、删除和列出清单
 
-以下 `~` 表示当前用户主目录，Windows 对应 `%USERPROFILE%`。
+在远程命令末尾追加 `--add`、`--del` 或 `--list`，均可搭配 `--agents`。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
 
-| agent 参数 | skill 安装位置 | 公共规则安装位置 |
-| --- | --- | --- |
-| `claude` | `~/.claude/skills/<skill_name>` | `~/.claude/CLAUDE.md` |
-| `codex` | `~/.codex/skills/<skill_name>` | `~/.codex/AGENTS.md` |
-| `copilot` | `~/.copilot/skills/<skill_name>` | `~/.copilot/copilot-instructions.md` |
+Windows PowerShell（Linux / macOS 将 `curl.exe` 换成 `curl`）：
 
-支持 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`COPILOT_HOME` 覆盖相应配置目录。
-规则来源为本项目的 `content/AGENTS.md`，skill 来源为 `content/` 下对应的整个目录。
-Windows 复制这些内容；Linux / macOS 创建链接，修改源文件立即生效。agent 可能需要开启新会话才能重新加载。
+```powershell
+# 为 Codex 增加第三方 skill
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name --agents codex
 
-Codex 使用仍受支持的 `$CODEX_HOME/skills` 兼容路径，让它与 Copilot 分别管理。
-官方推荐的 `~/.agents/skills` 是共享目录，Copilot 同样会读取。
-本工具的启用状态只描述自己管理的安装；agent 的其他发现目录、原有禁用设置仍会影响实际加载。
-已有 `AGENTS.override.md` 时，Codex 会优先读取该覆盖文件。
-这里的 Copilot 指 Copilot CLI 的个人配置，不修改 VS Code 工作区设置。
+# 删除该 skill 的 Claude Code 安装和清单关联
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name --agents claude-code
 
-## 备份与重复运行
+# 查看 Codex 的清单
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list --agents codex
+```
 
-- Windows 直接覆盖公共规则及所选 skill 的同名目标，不创建备份；skill 副本保持与源目录一致，旧文件也会清理。请在 `content/` 中维护内容，目标副本中的改动会被覆盖。
-- Linux / macOS 只备份公共规则目标（`AGENTS.md`、`CLAUDE.md` 或 `copilot-instructions.md`），备份名为原文件名加 `.bak-时间戳-标识`。已正确链接时不重建、不重复备份。
-- Linux / macOS 的 skill 不备份。已有符号链接直接替换；若同名位置是普通文件或目录，报错并提示先移走。
-- 禁用 skill 只删除本工具记录的副本或指向本项目的链接，不删除源 skill，不影响公共规则。
-- Linux / macOS 恢复原规则时，删除对应规则链接，再把需要的 `.bak-*` 文件改回原名。
+`--add owner/repo skill-one skill-two` 可一次增加多个 skill；省略 `--agents` 时选择全部三个。已有条目合并 agents。`--del skill-one skill-two` 同样支持多个名称；省略 `--agents` 时移除这些 skill 的全部关联，最后一个关联删除后才移除整条记录。删除不影响 `skills/` 中的源代码。`--list` 显示 skill、来源和 agents。
 
-项目路径请保持稳定。移动项目后，重新运行交互安装以更新到新路径。
+脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skills.json` 并推送，成功后清理临时副本。
 
-## 状态同步
+失败后按提示修复并重新运行同一条命令，脚本自动重新获取清单、补齐操作和提交推送。已完成的本机操作保留；commit 或 push 失败时保留操作副本并显示路径。远程发生并发改动时正常拒绝推送，不强推，不修改用户现有工作区。
 
-`skills.db` 在第一次安装、启用/禁用或 `--update` 时自动创建，已加入 `.gitignore`。
-不提交机器状态或 `.venv`。取消交互界面不会创建数据库或安装文件。
+Codex 与 Copilot 不能独立卸载同一份共享内容：若清单仍给另一个保留关联，需同时选择 `--agents codex github-copilot`。如果 CLI 因其他 agent 仍在使用而保留目标目录，删除检查会报错，不创建清单 commit。
 
-`--update` 以文件系统为准：
+普通同步不会自动清理清单外的 skill；手动移除但仍在清单中的项目会在下次同步时补回。`--add`、`--del`、`--list`、`--update`、`--dryrun` 互斥。
 
-1. 扫描 `content/` 下含 `SKILL.md` 的直接子目录，为新 skill 创建三个 agent 的状态记录。`content/AGENTS.md` 不作为 skill 显示。
-2. 从本工具记录的副本及实际链接读取启用状态；新 skill 默认未启用，除非已有对应链接。
-3. 源 skill 被删除或不再包含 `SKILL.md` 时，清理其本项目副本或链接及数据库记录。
-4. 手动删除已安装的 skill 后，状态同步为未启用，不会按数据库中的旧值重新安装。
-5. Windows 更新仍启用的 skill 和已安装的公共规则副本；旧版指向本项目的符号链接也会替换为副本。
+## 内容与开发约定
 
-数据库有三张表：`skills(name)`、`skill_agents(skill, agent, enabled)`、`copies(path)`。
-`copies` 记录本工具复制的目标，避免禁用或更新时处理其他来源的 skill。旧数据库自动补充该表；若删除数据库，重新运行安装以恢复副本记录。
-安装中途失败时，也会把已经完成的操作同步到数据库；修复问题后可直接重跑。
+每个 skill 一条记录，无来源类型或版本管理层：
 
-## SQLite 可执行文件
+```json
+{
+  "skills": [
+    {
+      "name": "pdf-analyze",
+      "source": "Charbddlie/everything-harness",
+      "agents": ["claude-code", "codex", "github-copilot"]
+    }
+  ]
+}
+```
 
-`sqlite/` 已包含官方 SQLite 3.53.4：Windows x64 / ARM64、Linux x64、macOS Intel / Apple Silicon。
-安装器无需调用外部 SQLite，随附程序用于直接检查本机数据库：
+来源使用 GitHub `owner/repo`；名称全局唯一，使用小写字母、数字和单个连字符，最多 64 字符。自有目录名与 `SKILL.md` 中的 `name` 保持一致。
 
-```bat
-sqlite\windows-x64\sqlite3.exe skills.db "SELECT * FROM skill_agents;"
+```text
+skills/pdf-analyze/
+  SKILL.md
+  dryrun.mjs
+  scripts/mineru_parse.mjs
+skills/skill-manage/
+  SKILL.md
+skills.json
+sync.mjs
+tests/
+AGENTS.md
+```
+
+自有 skill 包含脚本时，须在 skill 根目录提供 `dryrun.mjs`；纯说明 skill 无需添加。Dryrun 只检查环境和必要配置，不执行实际业务操作，错误由各个 skill 自行说明。
+
+`pdf-analyze` 使用 JavaScript，检查入口为：
+
+```sh
+node skills/pdf-analyze/dryrun.mjs
+```
+
+解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行 `--update`。
+
+## 代理与验证
+
+子进程继承环境代理；例如 Windows PowerShell：
+
+```powershell
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = 'http://127.0.0.1:7890'
+$env:ALL_PROXY = 'http://127.0.0.1:7890'
+```
+
+Linux / macOS：
+
+```sh
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=http://127.0.0.1:7890
+```
+
+代理不写死在代码中。curl、npm、Git 和 skills 自身的请求遵循各自的代理支持。
+
+离线测试无需安装项目依赖，包括临时 Git 仓库中的 commit / push 流程：
+
+```sh
+node --test
+```
+
+真实 CLI 测试默认跳过。显式开启后会使用临时用户目录、仓库 `.tmp/` 下的 npm 缓存验证真实安装、dryrun、更新和删除，不修改个人 harness 配置：
+
+```powershell
+$env:SKILLS_INTEGRATION = '1'
+node --test
+Remove-Item Env:SKILLS_INTEGRATION
 ```
 
 ```sh
-chmod +x sqlite/linux-x64/sqlite3
-sqlite/linux-x64/sqlite3 skills.db 'SELECT * FROM skill_agents;'
-# macOS 替换为 sqlite/macos-arm64/sqlite3 或 sqlite/macos-x64/sqlite3
+SKILLS_INTEGRATION=1 node --test
 ```
 
-下载来源、归档 SHA3-256 与二进制 SHA-256 见 `sqlite/checksums.json`。
-维护者使用项目 venv 的 Python 执行 `sqlite/fetch.py` 重新获取固定版本；它会验证官方归档校验值。
-SQLite 属于 [public domain](https://www.sqlite.org/copyright.html)。
-官方 Linux 二进制的系统库需求取决于其构建环境；其他 Linux 架构仍可使用 Python 安装器。
-
-联网需要代理时，可在当前终端设置，例如 Windows CMD：
-
-```bat
-set HTTP_PROXY=http://127.0.0.1:7890
-set HTTPS_PROXY=http://127.0.0.1:7890
-install.cmd
-```
-
-Linux / macOS 对应使用 `export HTTP_PROXY=http://127.0.0.1:7890` 与 `export HTTPS_PROXY=$HTTP_PROXY`。
-
-## 目录与验证
-
-```text
-AGENTS.md           本项目开发约定，不同步
-content/
-  AGENTS.md         需要同步的公共规则
-  pdf-analyze/      skill 目录，包含 SKILL.md 与 scripts/
-tui/                Python 界面、安装、状态管理
-sqlite/             各平台二进制及下载校验信息
-install.cmd         Windows 入口，GBK
-install.sh          Linux / macOS 入口
-requirements.txt    Textual 依赖
-tests/              数据库、复制、链接与界面测试
-.venv/              首次运行自动创建，忽略提交
-skills.db           本机状态，忽略提交
-```
-
-测试使用隔离临时目录，不修改个人 agent 配置：
-
-安装器、TUI、SQLite 维护脚本和项目测试使用项目 `.venv` 中的 Python；这些程序的依赖通过该解释器的 `-m pip` 安装。`content/` 内的 skill 脚本独立使用系统 Python。
-首次准备环境按当前系统选择 `install.cmd`（Windows）或 `sh install.sh`（Linux / macOS）。
-
-```bat
-.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-Linux / macOS 使用 `.venv/bin/python -m unittest discover -s tests -v`。
-Windows 复制安装的测试不需要特殊权限；涉及 Linux / macOS 链接行为及旧链接迁移的测试，在 Windows 缺少符号链接权限时会明确跳过。
-
-路径依据：[Claude skills](https://code.claude.com/docs/en/skills)、[Claude memory](https://code.claude.com/docs/en/memory)、[Codex skills](https://developers.openai.com/codex/skills/)、[Codex 兼容路径源码](https://github.com/openai/codex/blob/main/codex-rs/ext/skills/src/host_roots.rs)、[Codex AGENTS.md](https://developers.openai.com/codex/guides/agents-md/)、[Copilot skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)、[Copilot instructions](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions)。
+发布前检查 `git diff --check`、`git status --short` 和暂存内容，确认没有本机环境、缓存或数据库文件。

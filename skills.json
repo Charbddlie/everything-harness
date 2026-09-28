@@ -1,0 +1,14 @@
+{
+  "skills": [
+    {
+      "name": "pdf-analyze",
+      "source": "Charbddlie/everything-harness",
+      "agents": ["claude-code", "codex", "github-copilot"]
+    },
+    {
+      "name": "skill-manage",
+      "source": "Charbddlie/everything-harness",
+      "agents": ["claude-code", "codex", "github-copilot"]
+    }
+  ]
+}

@@ -1,7 +1,4 @@
 * text=auto eol=lf
-*.sh text eol=lf
-*.py text eol=lf
 *.md text eol=lf
-*.cmd text eol=crlf
-sqlite/**/sqlite3 binary
-sqlite/**/sqlite3.exe binary
+*.mjs text eol=lf
+*.json text eol=lf

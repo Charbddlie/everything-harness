@@ -17,15 +17,15 @@ If the cache exists and contains usable extracted Markdown, JSON, or text, read 
 
 ## MinerU Parse
 
-Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Run the helper with system Python 3.10+: use `py -3` or the system `python` on Windows, and system `python3` on Linux/macOS in place of `<python>` below. The helper uses only the standard library and does not use a project's venv.
+Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Use Node.js ≥22.20.0 and curl. Run `node "<skill-dir>/dryrun.mjs"` to check the environment without uploading a PDF or calling MinerU.
 
 ```bash
-<python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf
+node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf
 ```
 
 The script:
 
-1. Reads `MINERU_API_KEY` from the environment, falling back to `<skill-dir>/key.env`. Keep this file local; never commit its value.
+1. Reads `MINERU_API_KEY` only from the environment. If missing or blank, exits with `环境变量缺少MINERU_API_KEY` before contacting MinerU. No key file is read. Reusing existing cached output does not require a key.
 2. Creates `<pdf parent>/.mineru/<pdf file stem>/`.
 3. Requests MinerU upload URLs through the Precision API.
 4. Uploads the PDF to the pre-signed URL.
@@ -38,10 +38,10 @@ By default, the helper requests MinerU's `vlm` model version with formula and ta
 Useful options:
 
 ```bash
-<python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf --force
-<python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf --output-root /path/to/.mineru
-<python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf --language ch
-<python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf --disable-formula --disable-table
+node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf --force
+node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf --output-root /path/to/.mineru
+node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf --language ch
+node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf --disable-formula --disable-table
 ```
 
 ## Reading Cached Results

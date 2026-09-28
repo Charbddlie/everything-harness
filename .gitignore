@@ -1,8 +1,10 @@
 .venv/
+.tmp/
+node_modules/
 __pycache__/
 *.py[cod]
-skills.db
-skills.db-*
 .pytest_cache/
 .coverage
 key.env
+.env
+.env.*
