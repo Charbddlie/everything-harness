@@ -36,11 +36,14 @@ def main() -> int:
             if not sys.stdin.isatty() or not sys.stdout.isatty():
                 parser.error("交互安装需要终端。自动化使用 --non-interactive --agents AGENT、--update、--enable 或 --disable。")
             from .app import Installer
-            selection = Installer(manager).run()
-            if selection is None:
+            installer = Installer(manager)
+            messages = installer.run()
+            if messages is None:
+                if installer.install_error:
+                    print(f"安装失败：{installer.install_error}", file=sys.stderr)
+                    return 1
                 print("已取消。")
                 return 0
-            messages = manager.install(*selection)
         for message in messages:
             print(message)
         print("完成，skills.db 已同步。")

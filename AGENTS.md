@@ -15,7 +15,7 @@
 
 根据系统选择入口：Windows 在项目目录执行 `.\install.cmd`，Linux / macOS 执行 `sh install.sh`。两个入口接受相同参数，先检查或创建项目 `.venv`，再运行安装器。
 
-直接运行、不带参数时是供用户操作的交互模式：先勾选 agent，再勾选 skills（默认全选），公共规则自动安装。Agent 自动执行时使用下面的非交互命令，不启动 TUI 或等待用户勾选。
+直接运行、不带参数时是供用户操作的交互模式：先勾选 harness（三个默认均不选），再勾选 skills（默认全选），公共规则自动安装。列表显示 `[ ]` / `[✓]`，↑↓移动、空格勾选、Enter 下一步或安装、Esc 返回、Ctrl+C 取消。安装过程和失败原因在界面内显示，不自动弹出 UAC 授权窗口。Agent 自动执行时使用下面的非交互命令，不启动 TUI 或等待用户勾选。
 
 Windows 示例（Linux / macOS 把 `.\install.cmd` 替换为 `sh install.sh`）：
 

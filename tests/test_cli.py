@@ -26,11 +26,12 @@ class CliTests(unittest.TestCase):
         self.stdout = StringIO()
         self.stderr = StringIO()
 
-    def run_cli(self, *args):
+    def run_cli(self, *args, interactive=False):
         with (
             patch("sys.argv", ["install", *args]),
             patch("tui.__main__.Manager", return_value=self.manager),
-            patch("sys.stdin.isatty", return_value=False),
+            patch("sys.stdin.isatty", return_value=interactive),
+            patch.object(self.stdout, "isatty", return_value=interactive),
             redirect_stdout(self.stdout),
             redirect_stderr(self.stderr),
         ):
@@ -77,6 +78,20 @@ class CliTests(unittest.TestCase):
     def test_install_failure_returns_nonzero_without_starting_tui(self):
         with patch.object(self.manager, "install", side_effect=OSError("permission denied")):
             self.assertEqual(self.run_cli("--non-interactive", "--agents", "codex"), 1)
+        self.assertIn("permission denied", self.stderr.getvalue())
+
+    def test_interactive_install_is_not_repeated_after_ui_exits(self):
+        with patch("tui.app.Installer") as installer, patch.object(self.manager, "install") as install:
+            installer.return_value.run.return_value = ["installed in UI"]
+            self.assertEqual(self.run_cli(interactive=True), 0)
+        install.assert_not_called()
+        self.assertIn("installed in UI", self.stdout.getvalue())
+
+    def test_exiting_ui_after_install_failure_returns_nonzero(self):
+        with patch("tui.app.Installer") as installer:
+            installer.return_value.run.return_value = None
+            installer.return_value.install_error = "permission denied"
+            self.assertEqual(self.run_cli(interactive=True), 1)
         self.assertIn("permission denied", self.stderr.getvalue())
 
 

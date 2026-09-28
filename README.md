@@ -29,8 +29,9 @@ sh install.sh --enable copilot my-skill
 sh install.sh --disable codex my-skill
 ```
 
-无参数运行时，先勾选 agent，再勾选 skills；skills 默认全选。
-空格切换勾选、Tab 切换控件、Esc 取消。公共规则自动安装，不出现在选择列表中。
+无参数运行时，先勾选 harness（三个默认均不选），再勾选 skills（默认全选）。
+列表使用 `[ ]` / `[✓]` 显示状态：↑↓移动、空格勾选、Enter 进入下一步或安装、Esc 返回、Ctrl+C 取消。
+公共规则自动安装，不出现在选择列表中。安装时显示进度；失败原因保留在界面上，可以重试或退出。
 未勾选的 skills 会从所选 agent 移除；未选择的 agent 不受交互安装影响。
 没有 skills 时也能单独安装公共规则。
 
@@ -51,6 +52,7 @@ Linux / macOS 使用 `sh install.sh` 加相同参数。省略 `--skills` 时安�
 
 Windows **创建符号链接需要开启开发者模式，或以管理员身份运行终端**。
 程序遇到权限不足会报错，不会自动改为复制文件或修改系统设置。
+程序不会自动弹出 UAC 授权窗口。出现权限错误时，开启开发者模式或重新以管理员身份打开终端再运行。
 Python 源码和 Markdown 保持 UTF-8；Windows 入口及其重定向输出默认使用 GBK。
 
 ## 安装位置
