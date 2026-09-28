@@ -5,6 +5,8 @@ description: 使用远程 sync.mjs 管理个人 skill、设置全局 agents、�
 
 # Skill 管理
 
+执行增删或配置修改前，必须明确操作范围：仅本机（`--local`），还是远程清单（不带 `--local`，会 commit / push）。用户要求不明确时，先询问并等待确认，不能自行默认其中一种。“本地的 skill”可能指待上传的本机源码，不等于要求仅在本机安装或删除。
+
 需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`claude-code`、`github-copilot`，可手动增删。
 
 ```powershell
@@ -34,6 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 不带 `--local` 的 skill 增删、agents 增删和开关修改会自动 commit / push，需要 Git 提交身份和该仓库的 GitHub 写入权限。带 `--local` 只保存本机设置，不操作 Git。失败后按提示修复，再运行同一条命令。
 
 skill 增加、删除均使用生效的全局 agents，开关按整个 skill 生效。本机 add 只接收已在远程清单中的名称。
+`--del` 不删除仓库中的 skill 源码；如果用户要求连远程源码一起删除，需明确该范围后再修改仓库。
 
 agents 增删只保存配置，下次同步生效，已有安装保留。本机首次修改从当前生效列表增删，保存后整份列表覆盖远程；移除本机 `skills.json` 顶层 `agents` 字段即可恢复跟随远程。空列表会暂停同步、更新和 dryrun，skill add/del 会提示先添加 agent。Codex 和 Copilot 共用 skills 目录，内容可能对两者都可见。
 
@@ -63,4 +66,5 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 修改用户自有 skill 时，先克隆源码仓库：`git clone git@github.com:Charbddlie/everything-harness.git`；已有本地仓库则复用。
 在 `skills/<skill-name>/` 中修改内容；涉及脚本时同步维护 `dryrun.mjs`。
+将本机 skill 发布到远程时，只迁入说明、脚本和必要资源，不提交 `key.env`、密钥、缓存或本机配置。先推送源码，再用 `--add Charbddlie/everything-harness skill-name` 安装并加入远程清单。
 完成后提交并推送，再运行远程入口的 `--update` 同步安装。

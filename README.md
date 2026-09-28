@@ -43,6 +43,8 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 在远程命令中 node 的参数末尾追加 `--add`、`--del` 或 `--list`（Windows 放在外层双引号内）。增加和删除会自动获取仓库、修改清单、commit 并 push，无需手动操作 Git。电脑须已配置 Git 提交身份和该仓库的 GitHub 写入权限。
 
+通过 `skill-manage` 操作时，若要求没有明确仅本机还是远程，必须先询问确认；“本地的 skill”也可能指要发布到远程的源码。
+
 Windows PowerShell（Linux / macOS 去掉外层 `cmd /d /c "…"`，将 `curl.exe` 换成 `curl`）：
 
 ```powershell
@@ -97,17 +99,17 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 在同一个远程入口后加参数即可操作。以下命令仍使用远程脚本，无需下载其他脚本：
 
 ```powershell
-# 关闭 pdf-analyze 的远程默认自动同步：自动 commit / push
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --auto_sync false pdf-analyze"
+# 关闭 paper-read 的远程默认自动同步：自动 commit / push
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --auto_sync false paper-read"
 
-# 只在本机安装 pdf-analyze，dryrun 成功后保存 auto_sync=true
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add pdf-analyze"
+# 只在本机安装 paper-read，dryrun 成功后保存 auto_sync=true
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add paper-read"
 
-# 只在本机删除 pdf-analyze，成功后保存 auto_sync=false，后续同步不会装回
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del pdf-analyze"
+# 只在本机删除 paper-read，成功后保存 auto_sync=false，后续同步不会装回
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del paper-read"
 
 # 只修改本机开关，保留当前安装
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --auto_sync false pdf-analyze"
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --auto_sync false paper-read"
 ```
 
 将 `false` 换成 `true` 即开启。`--auto_sync` 只修改开关，不安装或删除；设为 true 后，下次同步才补齐。本机操作不需要 GitHub 写入权限，也不提交仓库。`--local` 可放在 node 参数末尾（Windows 外层双引号内）；普通同步始终考虑本机覆盖，`--list` 始终同时展示远程和本机状态。
@@ -123,9 +125,9 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
   "agents": ["claude-code", "codex", "github-copilot"],
   "skills": [
     {
-      "name": "pdf-analyze",
+      "name": "paper-read",
       "source": "Charbddlie/everything-harness",
-      "auto_sync": true
+      "auto_sync": false
     }
   ]
 }
@@ -134,10 +136,17 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 来源使用 GitHub `owner/repo`；名称全局唯一，使用小写字母、数字和单个连字符，最多 64 字符。自有目录名与 `SKILL.md` 中的 `name` 保持一致。
 
 ```text
-skills/pdf-analyze/
+skills/paper-add/
   SKILL.md
   dryrun.mjs
-  scripts/mineru_parse.mjs
+  scripts/zotero_add.py
+skills/paper-read/
+  SKILL.md
+  dryrun.mjs
+  scripts/mineru_parse.py
+  scripts/zotero_link.py
+skills/zotero-init/
+  SKILL.md
 skills/skill-manage/
   SKILL.md
 skills.json
@@ -148,10 +157,14 @@ AGENTS.md
 
 自有 skill 包含脚本时，须在 skill 根目录提供 `dryrun.mjs`；纯说明 skill 无需添加。Dryrun 只检查环境和必要配置，不执行实际业务操作，错误由各个 skill 自行说明。
 
-`pdf-analyze` 使用 JavaScript，检查入口为：
+`paper-add`、`paper-read` 和 `zotero-init` 从本机技能迁入。前两者保留 Python 标准库脚本，使用 Windows conda base（`~\miniconda3\python.exe`）；各自的 `dryrun.mjs` 检查 Zotero 路径与凭据，`paper-read` 还检查 MinerU 密钥。`zotero-init` 是初始化说明，不需要检查脚本。`key.env` 不分发，推荐用环境变量提供 `MINERU_API_KEY`；Zotero 凭据支持环境变量或现有 Claude MCP 配置。初始化说明当前针对 Claude Code，跨 agent 安装不自动注册 MCP。
+
+这三个 skill 的远程 `auto_sync` 默认为 `false`；已安装的本机副本仍可用，关闭自动同步不会禁用或卸载它们。`pdf-analyze` 已退出使用清单，历史源码仍保留。
+
+例如检查 `paper-read`：
 
 ```sh
-node skills/pdf-analyze/dryrun.mjs
+node skills/paper-read/dryrun.mjs
 ```
 
 解析命令和参数见该 skill 的 `SKILL.md`。根目录 `AGENTS.md` 仅用于本仓库开发，不对外分发。Skill 源代码变更通过正常 Git 提交和推送发布，然后运行 `--update`。
