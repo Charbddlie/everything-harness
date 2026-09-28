@@ -24,16 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 每次运行都会覆盖安装开启自动同步的 skill。修改自有 skill 后，先推送源码，再运行同一条命令同步。
 
-所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex 和 GitHub Copilot**；Claude Code 可手动添加，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
+所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，支持 **Codex 和 GitHub Copilot**，默认包含两者，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
-- 普通运行对生效 `auto_sync=true` 的 skill 按来源分组，调用 `skills add --copy`，覆盖安装到全部生效 agents。自有和第三方 skill 使用相同流程。
+- 普通运行对生效 `auto_sync=true` 的 skill 按来源分组，调用 `skills add`，覆盖安装到全部生效 agents。自有和第三方 skill 使用相同流程。
 - 覆盖安装会替换安装目录中的本地修改；源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
 - 安装后，运行本次选中的所有 skill 的 `dryrun.mjs`。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
 - `--dryrun` 只检查开启自动同步的 skill，不安装、不更新；修复环境后可反复运行。
 - 无 dryrun 的纯说明 skill 会跳过检查。自有 skill 包含脚本却缺少 dryrun 会报错；第三方若提供 `dryrun.mjs`，同样执行。
 - 来源冲突会在安装前报错；旧安装器留下的无来源记录允许通过显式安装接管。
 
-安装使用 `skills` 的 `--copy` 模式，创建实体 skill 目录。目录选择、下载、复制和锁文件均交给 `skills`；同步脚本不比较内容哈希。Codex 和 Copilot 共用 `~/.agents/skills`，所以内容可能同时对两者可见。已有父目录软链接保持原状，迁移目录需单独处理。
+安装使用 `skills` 的原生共享目录规则。Codex 和 Copilot 共用 `~/.agents/skills` 中的一份实体 skill 文件，内容可能同时对两者可见。目录选择、下载、安装和锁文件均交给 `skills`；同步脚本不比较内容哈希。已有父目录软链接保持原状，迁移目录需单独处理。
 
 ## 增加、删除和列出清单
 
@@ -68,20 +68,17 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ## 全局 agents
 
-可设置的名称为 `codex`、`github-copilot`、`claude-code`，一次可传多个。所有 skill 使用同一份目标列表，不设置单个 skill 的 agents。
+可设置的名称为 `codex`、`github-copilot`，一次可传多个。所有 skill 使用同一份目标列表，不设置单个 skill 的 agents。
 
 ```powershell
 # 修改远程全局 agents：自动 commit / push
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot claude-code"
-
-# 从远程目标移除手动添加的 Claude Code
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del_agents claude-code"
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot"
 
 # 本机只使用 Codex（基于默认的两个目标）
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot"
 
-# 将 Claude Code 加回本机目标
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents claude-code"
+# 将 Copilot 加回本机目标
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents github-copilot"
 ```
 
 这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/skills.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。

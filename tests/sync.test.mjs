@@ -58,9 +58,9 @@ function harness({ manifest = catalog, installed = [], failure, result, dryrun }
   };
 }
 
-test('every sync reinstalls selected skills in copy mode and runs dryrun', () => {
+test('every sync reinstalls selected skills and runs dryrun', () => {
   const fixture = harness(); fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
   fixture.run();
   assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
   assert.equal(fixture.events.filter((event) => event === 'dryrun').length, 2);
@@ -68,19 +68,19 @@ test('every sync reinstalls selected skills in copy mode and runs dryrun', () =>
 });
 
 test('sync reinstalls all targets including previously installed agents', () => {
-  const fixture = harness({ installed: [record('one', ['codex']), record('two', ['claude-code', 'github-copilot'])] });
+  const fixture = harness({ installed: [record('one', ['codex']), record('two', ['github-copilot'])] });
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
   fixture.run();
   assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
 });
 
 test('shared installations are overwritten even when Codex and Copilot apps are undetected', () => {
   const shared = join(tmpdir(), 'shared');
-  const fixture = harness({ installed: ['one', 'two'].map((name) => ({ ...record(name, ['claude-code']), path: join(shared, name) })) });
+  const fixture = harness({ installed: ['one', 'two'].map((name) => ({ ...record(name, []), path: join(shared, name) })) });
   fixture.run([], { sharedSkillsDir: shared });
   assert.equal(fixture.calls.length, 2);
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
 });
 
 test('overwrite is scoped, source conflicts are checked before installs, untracked records are adopted', () => {
@@ -102,8 +102,8 @@ test('own and third-party skills are grouped by source and overwritten on every 
   fixture.run();
   const installs = fixture.calls.filter((args) => args[0] === 'add');
   assert.equal(installs.length, 4);
-  assert.deepEqual(installs[0], ['add', own, '--skill', 'one', 'three', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
-  assert.deepEqual(installs[1], ['add', 'example/skills', '--skill', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(installs[0], ['add', own, '--skill', 'one', 'three', '--agent', 'codex', '-g', '--yes', '--json']);
+  assert.deepEqual(installs[1], ['add', 'example/skills', '--skill', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
   assert.deepEqual(installs.slice(2), installs.slice(0, 2));
 });
 
@@ -127,12 +127,12 @@ test('global remote targets apply to every skill on every sync', () => {
   const manifest = { ...catalog, agents: ['codex'] };
   const fixture = harness({ manifest });
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
   fixture.run();
   assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 2);
-  manifest.agents.push('claude-code');
+  manifest.agents.push('github-copilot');
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', 'claude-code', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', 'github-copilot', '-g', '--yes', '--json']);
   assert.deepEqual(localManifest(fixture), { skills: [] });
 });
 
@@ -141,24 +141,24 @@ test('local global agents replace remote targets for sync, add and del while kee
   const fixture = harness({ manifest });
   setLocal(fixture, [entry('one', 'example/skills', false)]);
   fixture.dependencies.runGit = () => assert.fail('local mode must not call Git');
-  fixture.run(['--local', '--add_agents', 'claude-code']);
+  fixture.run(['--local', '--add_agents', 'github-copilot']);
   fixture.run(['--del_agents', 'codex', '--local']);
   assert.equal(fixture.calls.length, 0);
-  assert.deepEqual(localManifest(fixture), { agents: ['claude-code'], skills: [entry('one', 'example/skills', false)] });
+  assert.deepEqual(localManifest(fixture), { agents: ['github-copilot'], skills: [entry('one', 'example/skills', false)] });
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'github-copilot', '-g', '--yes', '--json']);
   manifest.agents.push('github-copilot');
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'two', '--agent', 'github-copilot', '-g', '--yes', '--json']);
   fixture.run(['--local', '--add', 'one']);
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', '--agent', 'github-copilot', '-g', '--yes', '--json']);
   fixture.installed.find((item) => item.name === 'one').agents.push('Codex');
   fixture.run(['--local', '--del', 'one']);
-  assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'one', '-g', '--yes', '--agent', 'claude-code']);
+  assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'one', '-g', '--yes', '--agent', 'github-copilot']);
   assert.deepEqual(fixture.installed.find((item) => item.name === 'one').agents, ['Codex']);
-  assert.deepEqual(localManifest(fixture).agents, ['claude-code']);
+  assert.deepEqual(localManifest(fixture).agents, ['github-copilot']);
   fixture.run(['--list']);
-  assert.ok(fixture.logs.some((line) => line.includes('远程 agents：codex, github-copilot\n本机 agents：claude-code\n生效 agents：claude-code')));
+  assert.ok(fixture.logs.some((line) => line.includes('远程 agents：codex, github-copilot\n本机 agents：github-copilot\n生效 agents：github-copilot')));
 });
 
 test('empty global targets disable operations without removing installations; agents can be re-enabled', () => {
@@ -174,7 +174,7 @@ test('empty global targets disable operations without removing installations; ag
   assert.equal(fixture.calls.length, 0);
   fixture.run(['--local', '--add_agents', 'codex']);
   fixture.run();
-  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', '-g', '--yes', '--json']);
   const emptyRemote = harness({ manifest: { ...catalog, agents: [] } });
   emptyRemote.run();
   assert.equal(emptyRemote.calls.length, 0);
@@ -192,7 +192,7 @@ test('invalid global agents and agent arguments fail before any skill operation'
     assert.equal(local.calls.length, 0);
   }
   for (const args of [['--add_agents'], ['--del_agents'], ['--add_agents', 'unknown'], ['--del_agents', 'codex', 'codex'],
-    ['--add_agents', 'codex', '--del_agents', 'claude-code'], ['--add_agents', 'codex', '--update']]) assert.throws(() => parseArgs(args));
+    ['--add_agents', 'codex', '--del_agents', 'github-copilot'], ['--add_agents', 'codex', '--update']]) assert.throws(() => parseArgs(args));
 });
 
 test('auto_sync defaults and local overrides control repeated sync and dryrun', () => {
@@ -227,7 +227,7 @@ test('old per-skill local agents are ignored while sync overrides are retained',
   const fixture = harness();
   setLocal(fixture, [{ ...entry('one', 'example/skills', false), agents: ['codex'] }, { ...entry('two'), agents: ['codex'] }]);
   fixture.run();
-  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'two', '--agent', ...agents, '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls[1], ['add', 'example/skills', '--skill', 'two', '--agent', ...agents, '-g', '--yes', '--json']);
   fixture.run(['--local', '--auto_sync', 'false', 'two']);
   assert.equal(localManifest(fixture).skills[0].auto_sync, false);
   assert.ok(localManifest(fixture).skills.every((item) => !Object.hasOwn(item, 'agents')));
@@ -390,17 +390,17 @@ const remoteManifest = (options) => JSON.parse(runCommand('git', ['--git-dir', o
 
 test('remote agent changes publish only global settings, are idempotent, and preserve local overrides', (t) => {
   const options = managed(repository(t)), fixture = harness();
-  fixture.run(['--local', '--del_agents', 'claude-code']);
+  fixture.run(['--local', '--del_agents', 'github-copilot']);
   const before = readFileSync(localPath(fixture), 'utf8');
-  fixture.run(['--del_agents', 'github-copilot', 'codex'], options);
-  assert.deepEqual(remoteManifest(options), { agents: ['claude-code'], skills: [entry('one')] });
+  fixture.run(['--del_agents', 'codex'], options);
+  assert.deepEqual(remoteManifest(options), { agents: ['github-copilot'], skills: [entry('one')] });
   fixture.run(['--add_agents', 'codex'], options);
-  assert.deepEqual(remoteManifest(options).agents, ['claude-code', 'codex']);
+  assert.deepEqual(remoteManifest(options).agents, ['github-copilot', 'codex']);
   const revision = () => runCommand('git', ['--git-dir', options.repositoryUrl, 'rev-parse', 'main']);
   const head = revision();
   fixture.run(['--add_agents', 'codex'], options);
   assert.equal(revision(), head);
-  fixture.run(['--del_agents', 'claude-code', 'codex'], options);
+  fixture.run(['--del_agents', 'github-copilot', 'codex'], options);
   assert.deepEqual(remoteManifest(options).agents, []);
   fixture.run(['--add_agents', 'github-copilot'], options);
   assert.deepEqual(remoteManifest(options).agents, ['github-copilot']);
@@ -413,12 +413,12 @@ test('remote agent changes publish only global settings, are idempotent, and pre
 
 test('remote skill add and del use local global targets and preserve other agents', (t) => {
   const options = managed(repository(t)), fixture = harness();
-  fixture.run(['--local', '--del_agents', 'codex', 'github-copilot']);
+  fixture.run(['--local', '--del_agents', 'codex']);
   fixture.run(['--add', 'third/repo', 'two'], options);
-  assert.deepEqual(fixture.calls.find((args) => args[0] === 'add'), ['add', 'third/repo', '--skill', 'two', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
+  assert.deepEqual(fixture.calls.find((args) => args[0] === 'add'), ['add', 'third/repo', '--skill', 'two', '--agent', 'github-copilot', '-g', '--yes', '--json']);
   fixture.installed.find((item) => item.name === 'two').agents.push('Codex');
   fixture.run(['--del', 'two'], options);
-  assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'two', '-g', '--yes', '--agent', 'claude-code']);
+  assert.deepEqual(fixture.calls.find((args) => args[0] === 'remove'), ['remove', 'two', '-g', '--yes', '--agent', 'github-copilot']);
   assert.deepEqual(fixture.installed.find((item) => item.name === 'two').agents, ['Codex']);
   assert.deepEqual(remoteManifest(options), { agents, skills: [entry('one')] });
 });

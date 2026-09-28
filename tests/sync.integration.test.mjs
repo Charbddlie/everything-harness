@@ -6,7 +6,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createSkillsRunner, runCommand, runDryruns, sync } from '../sync.mjs';
 
-test('real npx skills copy installation and repeated overwrite in an isolated profile', {
+test('real npx skills shared installation and repeated overwrite in an isolated profile', {
   skip: process.env.SKILLS_INTEGRATION !== '1',
   timeout: 240_000,
 }, (t) => {
@@ -17,7 +17,7 @@ test('real npx skills copy installation and repeated overwrite in an isolated pr
   const env = { ...process.env };
   // Override only child-process environment; never touch the user's profile.
   for (const name of ['HOME', 'USERPROFILE']) env[name] = profile;
-  for (const name of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME',
+  for (const name of ['CODEX_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME',
     'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'APPDATA', 'LOCALAPPDATA', 'FLATPAK_XDG_CONFIG_HOME',
     'VIBE_HOME', 'HERMES_HOME', 'AUTOHAND_HOME', 'GROK_HOME', 'SARVAM_HOME']) {
     env[name] = join(profile, name.toLowerCase());
@@ -38,7 +38,7 @@ test('real npx skills copy installation and repeated overwrite in an isolated pr
   cpSync(new URL('../skills/pdf-analyze/scripts/', import.meta.url), join(skill, 'scripts'), { recursive: true });
   cpSync(new URL('../skills/pdf-analyze/dryrun.mjs', import.meta.url), join(skill, 'dryrun.mjs'));
   writeFileSync(join(skill, 'SKILL.md'), `${skillText}\nVersion one\n`);
-  const installArgs = ['add', source, '--skill', 'pdf-analyze', '--agent', 'codex', '-g', '--yes', '--copy', '--json'];
+  const installArgs = ['add', source, '--skill', 'pdf-analyze', '--agent', 'codex', '-g', '--yes', '--json'];
   const first = JSON.parse(runSkills(installArgs));
   assert.equal(first[0].status, 'installed');
   assert.deepEqual(first[0].agents, ['Codex']);
@@ -66,7 +66,7 @@ test('real npx skills copy installation and repeated overwrite in an isolated pr
   git(['add', '.']);
   git(['-c', 'user.name=Skill Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'Fixture']);
   const catalog = {
-    agents: ['claude-code', 'codex', 'github-copilot'],
+    agents: ['codex', 'github-copilot'],
     skills: [{ source: 'integration-fixture/skills', name: 'pdf', auto_sync: true }],
   };
   const calls = [];
@@ -78,29 +78,26 @@ test('real npx skills copy installation and repeated overwrite in an isolated pr
     log: (message) => t.diagnostic(message),
   };
   sync([], dependencies);
-  assert.deepEqual(calls.find((args) => args[0] === 'add').slice(5, 8), ['claude-code', 'codex', 'github-copilot']);
+  assert.deepEqual(calls.find((args) => args[0] === 'add').slice(5, 7), ['codex', 'github-copilot']);
   const sharedPath = join(profile, '.agents', 'skills', 'pdf');
-  const claudePath = join(env.CLAUDE_CONFIG_DIR, 'skills', 'pdf');
-  for (const path of [sharedPath, claudePath]) {
+  for (const path of [join(profile, '.agents', 'skills'), sharedPath]) {
     assert.equal(lstatSync(path).isSymbolicLink(), false);
     assert.equal(lstatSync(path).isDirectory(), true);
   }
   assert.equal(existsSync(join(env.CODEX_HOME, 'skills', 'pdf')), false);
+  assert.equal(existsSync(join(profile, '.copilot', 'skills', 'pdf')), false);
   // Publish a new source revision and verify normal sync replaces stale files.
   writeFileSync(join(fixtureSkill, 'SKILL.md'), '---\nname: pdf\ndescription: Updated installation fixture.\n---\n\nVersion two\n');
   git(['add', '.']);
   git(['-c', 'user.name=Skill Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'Update fixture']);
   writeFileSync(join(sharedPath, 'stale.txt'), 'local stale file');
-  // Model an installed Codex app: the CLI preserves shared content on partial
-  // removal only when it detects another app that still uses that directory.
+  // Model installed apps so list and removal exercise shared ownership.
   mkdirSync(env.CODEX_HOME, { recursive: true });
-  runSkills(['remove', 'pdf', '-g', '--yes', '--agent', 'claude-code']);
-  sync([], dependencies); // Restore coverage after one agent is manually removed.
-  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', ...catalog.agents, '-g', '--yes', '--copy', '--json']);
-  for (const path of [sharedPath, claudePath]) {
-    assert.match(readFileSync(join(path, 'SKILL.md'), 'utf8'), /Version two/);
-    assert.equal(lstatSync(path).isSymbolicLink(), false);
-  }
+  mkdirSync(join(profile, '.copilot'), { recursive: true });
+  sync([], dependencies);
+  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', ...catalog.agents, '-g', '--yes', '--json']);
+  assert.match(readFileSync(join(sharedPath, 'SKILL.md'), 'utf8'), /Version two/);
+  assert.equal(lstatSync(sharedPath).isSymbolicLink(), false);
   assert.equal(existsSync(join(sharedPath, 'stale.txt')), false);
   const addCount = calls.filter((args) => args[0] === 'add').length;
   assert.equal(addCount, 2);
@@ -110,18 +107,17 @@ test('real npx skills copy installation and repeated overwrite in an isolated pr
   const remote = installed.find((entry) => entry.name === 'pdf');
   assert.equal(remote.source.toLowerCase(), catalog.skills[0].source.toLowerCase());
   assert.equal(remote.sourceType, 'github');
-  assert.equal(remote.agents.includes('Claude Code'), true);
+  assert.deepEqual(remote.agents.slice().sort(), ['Codex', 'GitHub Copilot']);
   assert.equal(installed.some((entry) => entry.name === 'pdf-analyze'), true);
   const beforeAgentChange = calls.length;
-  sync(['--local', '--del_agents', 'codex', 'github-copilot'], dependencies);
+  sync(['--local', '--del_agents', 'github-copilot'], dependencies);
   assert.equal(calls.length, beforeAgentChange);
   sync([], dependencies);
-  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'claude-code', '-g', '--yes', '--copy', '--json']);
-  sync(['--local', '--del', 'pdf'], dependencies);
-  const shared = JSON.parse(runSkills(['list', '-g', '--json'])).find((entry) => entry.name === 'pdf');
-  assert.ok(shared);
-  assert.equal(shared.agents.includes('Claude Code'), false);
-  sync(['--local', '--add_agents', 'codex', 'github-copilot'], dependencies);
+  assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'codex', '-g', '--yes', '--json']);
+  const beforeDelete = readFileSync(join(dependencies.stateDir, 'skills.json'), 'utf8');
+  assert.throws(() => sync(['--local', '--del', 'pdf'], dependencies), /目标安装仍存在/);
+  assert.equal(readFileSync(join(dependencies.stateDir, 'skills.json'), 'utf8'), beforeDelete);
+  sync(['--local', '--add_agents', 'github-copilot'], dependencies);
   sync(['--local', '--del', 'pdf'], dependencies);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf'), false);
   const afterDelete = calls.filter((args) => args[0] === 'add').length;

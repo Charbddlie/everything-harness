@@ -7,7 +7,7 @@ description: 使用远程 sync.mjs 管理个人 skill、设置全局 agents、�
 
 执行增删或配置修改前，必须明确操作范围：仅本机（`--local`），还是远程清单（不带 `--local`，会 commit / push）。用户要求不明确时，先询问并等待确认，不能自行默认其中一种。“本地的 skill”可能指待上传的本机源码，不等于要求仅在本机安装或删除。
 
-需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`github-copilot`；`claude-code` 可手动添加。
+需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，支持 `codex`、`github-copilot`，默认包含两者。
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
@@ -19,7 +19,7 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-每次运行都通过 `skills add --copy` 覆盖安装开启 `auto_sync` 的 skill，并检查环境。安装使用实体 skill 目录，目录选择与锁文件由 `skills` 管理。已有父目录软链接需另行迁移。覆盖安装会替换本地修改，源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
+每次运行都通过 `skills add` 覆盖安装开启 `auto_sync` 的 skill，并检查环境。安装遵循 `skills` 的原生共享目录规则，目录选择与锁文件由 `skills` 管理。已有父目录软链接需另行迁移。覆盖安装会替换本地修改，源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
 
 本机 `~/.everything-harness/skills.json` 中的开关优先，没有本机记录就跟随远程。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
 
@@ -29,8 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 - `--local --add skill-name`：只在本机安装，环境检查成功后保存本机 `auto_sync=true`。
 - `--local --del skill-name`：只在本机删除，成功后保存本机 `auto_sync=false`，下次同步不会装回。
 - `--local --auto_sync false skill-name`：只改本机开关，保留当前安装；也支持 `true`。
-- `--add_agents codex` / `--del_agents claude-code`：增删远程全局目标，可一次传多个名称。
-- `--local --add_agents codex` / `--local --del_agents claude-code`：只改本机全局目标。
+- `--add_agents codex` / `--del_agents github-copilot`：增删远程全局目标，可一次传多个名称。
+- `--local --add_agents codex` / `--local --del_agents github-copilot`：只改本机全局目标。
 - `--list`：查看远程、本机和生效 agents，以及每个 skill 的开关，未覆盖时显示“跟随远程”。
 - `--dryrun`：检查开启自动同步的 skill 环境，按报错补齐配置后重试。
 

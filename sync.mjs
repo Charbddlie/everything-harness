@@ -6,8 +6,7 @@ import { delimiter, dirname, join, relative } from 'node:path';
 
 export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/skills.json`;
-export const AGENTS = new Map([['claude-code', 'Claude Code'], ['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
-const SHARED_AGENTS = ['codex', 'github-copilot'];
+export const AGENTS = new Map([['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
 const USAGE = `node sync.mjs [--dryrun | --list]
 node sync.mjs --add <owner/repo> <skill> ...
 node sync.mjs --del <skill> ...
@@ -175,7 +174,7 @@ function checkSources(entries, installed) {
 function hasAgent(entry, agent, sharedSkillsDir) {
   // The CLI can omit undetected Codex/Copilot apps from list's display names.
   return entry && (entry.agents.includes(AGENTS.get(agent))
-    || (SHARED_AGENTS.includes(agent) && relative(sharedSkillsDir, dirname(entry.path)) === ''));
+    || relative(sharedSkillsDir, dirname(entry.path)) === '');
 }
 
 function installationJobs(entries, agents) {
@@ -267,7 +266,7 @@ function install(entries, { runSkills, installed, agents, log }) {
     const label = `${job.source} / ${job.names.join(', ')} → ${job.agents.join(', ')}`;
     log(`覆盖安装：${label}`);
     try {
-      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, '-g', '--yes', '--copy', '--json']), 'skills add');
+      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, '-g', '--yes', '--json']), 'skills add');
       check(Array.isArray(results), 'skills add 应返回数组。');
       for (const name of job.names) {
         const result = results.find((item) => item?.name === name);

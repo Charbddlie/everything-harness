@@ -2,11 +2,11 @@
 
 - 保持轻量、简单、易读。仓库维护个人 skill 内容和使用清单；安装、覆盖更新交给 `npx skills`，不实现 TUI、安装数据库或链接管理。
 - 自有 skill 放在 `skills/<skill-name>/SKILL.md`，脚本和资源保留在对应目录内。Skill 规则仅写在各自的 `SKILL.md`，不追加到任何 `AGENTS.md`；根目录本文件仅用于仓库开发，不对外安装。
-- `skills.json` 顶层 `agents` 统一设置所有 skill 的目标，默认包含 `codex`、`github-copilot`，`claude-code` 可手动添加，不自动探测选择。每个 skill 一条记录，仅包含 `name`、GitHub `owner/repo` 来源和布尔字段 `auto_sync`，不设置 skill 级 agents。名称全局唯一；不增加来源分类、通配符或版本管理系统。
+- `skills.json` 顶层 `agents` 统一设置所有 skill 的目标，支持 `codex`、`github-copilot`，默认包含两者，不自动探测选择。每个 skill 一条记录，仅包含 `name`、GitHub `owner/repo` 来源和布尔字段 `auto_sync`，不设置 skill 级 agents。名称全局唯一；不增加来源分类、通配符或版本管理系统。
 - `sync.mjs` 使用 Node.js 内置模块，通过系统的 `npx skills` 运行 CLI。所有入口读取远程 main 清单，安装和删除使用生效的全局 agents。面向用户仅说明远程入口，不要求克隆仓库或手动操作 Git。
 - 清单完整校验后才执行安装，子进程使用结构化参数。不直接编辑 harness 配置、链接或 `skills` 锁文件；不自动卸载清单外的 skill。
 - `~/.everything-harness/skills.json` 使用相同结构，仅保存本机明确选择的条目；其 `auto_sync` 优先于远程默认，来源始终取远程清单。可选的顶层 `agents` 完整覆盖远程列表，缺省跟随远程，空数组表示没有目标。首次同步创建空 skill 清单，不复制默认值；后续同步不覆盖本机选择。读取旧本机配置时忽略 skill 级 agents 字段，保留原开关。
-- 普通运行按来源分组，通过 `skills add --copy` 覆盖安装生效 `auto_sync=true` 的 skill 到全部生效 agents。目录选择、复制和锁文件由 `skills` 管理；同步脚本不比较内容哈希。`--dryrun` 只检查选中的 skill。关闭开关本身不卸载内容。
+- 普通运行按来源分组，通过 `skills add` 覆盖安装生效 `auto_sync=true` 的 skill 到全部生效 agents，共用 `~/.agents/skills` 中的一份实体文件。目录选择、安装和锁文件由 `skills` 管理；同步脚本不比较内容哈希。`--dryrun` 只检查选中的 skill。关闭开关本身不卸载内容。
 - `--add SOURCE SKILL...` / `--del SKILL...` 自动在临时目录获取远程 main，再执行本机安装或删除；安装还须通过 dryrun。成功后只 commit `skills.json` 并 push，完成后清理临时副本。失败保留已完成的本机操作及未推送的清单改动，提示重新运行同一条命令；不操作用户工作区、不强推。
 - `--auto_sync true|false SKILL...` 只改远程开关并自动 commit / push。`--local --add SKILL...` / `--local --del SKILL...` 使用远程清单的来源和生效 agents，成功后只保存本机 `auto_sync=true/false`；`--local --auto_sync true|false SKILL...` 只改本机开关。这些本机操作不调用 Git；失败不改本机配置。开关按整个 skill 生效。
 - `--add_agents AGENT...` / `--del_agents AGENT...` 只改远程全局列表并自动 commit / push；带 `--local` 时从当前生效列表增删后保存完整本机覆盖，不操作 Git。这两个选项不立即安装或卸载，下次同步生效。空目标时同步和 dryrun 跳过，skill add/del 在操作前报错。
