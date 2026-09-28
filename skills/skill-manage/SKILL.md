@@ -7,8 +7,6 @@ description: 使用远程 sync.mjs 管理个人 skill、设置全局 agents、�
 
 需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`claude-code`、`github-copilot`，可手动增删。
 
-Windows PowerShell：通过 `cmd /d /c` 传递原始字节，避免 PowerShell 5.1 管道转码损坏 UTF-8 脚本。
-
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
 ```
@@ -62,3 +60,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
+
+修改用户自有 skill 时，先克隆源码仓库：`git clone git@github.com:Charbddlie/everything-harness.git`；已有本地仓库则复用。
+在 `skills/<skill-name>/` 中修改内容；涉及脚本时同步维护 `dryrun.mjs`。
+完成后提交并推送，再运行远程入口的 `--update` 同步安装。
