@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --update"
 ```
 
-所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex、Claude Code 和 GitHub Copilot**；本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
+所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，默认包含 **Codex 和 GitHub Copilot**；Claude Code 可手动添加，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
 - 普通运行只同步生效 `auto_sync=true` 的 skill，全局补齐缺失的 skill / agent 组合，已安装的跳过。
 - `--update` 仅重装开启自动同步且匹配目标的 skill，不运行无范围限制的全局更新。
@@ -78,11 +78,11 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 # 修改远程全局 agents：自动 commit / push
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add_agents codex github-copilot claude-code"
 
-# 从远程默认目标移除 Claude Code
+# 从远程目标移除手动添加的 Claude Code
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del_agents claude-code"
 
-# 本机只使用 Codex（基于默认的三个目标）
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot claude-code"
+# 本机只使用 Codex（基于默认的两个目标）
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot"
 
 # 将 Claude Code 加回本机目标
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents claude-code"
@@ -122,7 +122,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ```json
 {
-  "agents": ["claude-code", "codex", "github-copilot"],
+  "agents": ["codex", "github-copilot"],
   "skills": [
     {
       "name": "paper-read",

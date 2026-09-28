@@ -2,7 +2,7 @@
 
 - 保持轻量、简单、易读。仓库维护个人 skill 内容和使用清单；安装、覆盖更新交给 `npx skills`，不实现 TUI、安装数据库或链接管理。
 - 自有 skill 放在 `skills/<skill-name>/SKILL.md`，脚本和资源保留在对应目录内。Skill 规则仅写在各自的 `SKILL.md`，不追加到任何 `AGENTS.md`；根目录本文件仅用于仓库开发，不对外安装。
-- `skills.json` 顶层 `agents` 统一设置所有 skill 的目标，默认包含 `claude-code`、`codex`、`github-copilot`，手动配置，不自动探测选择。每个 skill 一条记录，仅包含 `name`、GitHub `owner/repo` 来源和布尔字段 `auto_sync`，不设置 skill 级 agents。名称全局唯一；不增加来源分类、通配符或版本管理系统。
+- `skills.json` 顶层 `agents` 统一设置所有 skill 的目标，默认包含 `codex`、`github-copilot`，`claude-code` 可手动添加，不自动探测选择。每个 skill 一条记录，仅包含 `name`、GitHub `owner/repo` 来源和布尔字段 `auto_sync`，不设置 skill 级 agents。名称全局唯一；不增加来源分类、通配符或版本管理系统。
 - `sync.mjs` 使用 Node.js 内置模块，通过系统的 `npx skills` 运行 CLI。所有入口读取远程 main 清单，安装和删除使用生效的全局 agents。面向用户仅说明远程入口，不要求克隆仓库或手动操作 Git。
 - 清单完整校验后才执行安装，子进程使用结构化参数。不直接编辑 harness 配置、链接或 `skills` 锁文件；不自动卸载清单外的 skill。
 - `~/.everything-harness/skills.json` 使用相同结构，仅保存本机明确选择的条目；其 `auto_sync` 优先于远程默认，来源始终取远程清单。可选的顶层 `agents` 完整覆盖远程列表，缺省跟随远程，空数组表示没有目标。首次同步创建空 skill 清单，不复制默认值；后续同步不覆盖本机选择。读取旧本机配置时忽略 skill 级 agents 字段，保留原开关。

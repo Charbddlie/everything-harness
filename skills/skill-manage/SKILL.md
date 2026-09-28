@@ -7,7 +7,7 @@ description: 使用远程 sync.mjs 管理个人 skill、设置全局 agents、�
 
 执行增删或配置修改前，必须明确操作范围：仅本机（`--local`），还是远程清单（不带 `--local`，会 commit / push）。用户要求不明确时，先询问并等待确认，不能自行默认其中一种。“本地的 skill”可能指待上传的本机源码，不等于要求仅在本机安装或删除。
 
-需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`claude-code`、`github-copilot`，可手动增删。
+需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。所有 skill 共用一份 agents 设置，默认包含 `codex`、`github-copilot`；`claude-code` 可手动添加。
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
@@ -52,10 +52,10 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del skill-name"
 ```
 
-从默认三个目标中，只为本机保留 Codex：
+从默认两个目标中，只为本机保留 Codex：
 
 ```powershell
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents claude-code github-copilot"
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del_agents github-copilot"
 ```
 
 更新所有开启自动同步的 skill：
