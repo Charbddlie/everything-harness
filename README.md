@@ -141,6 +141,10 @@ skills/copilot-api/
   dryrun.mjs
   scripts/copilot-api.bat
   scripts/copilot-api.sh
+skills/dev-directory/
+  SKILL.md
+skills/formula-display/
+  SKILL.md
 skills/paper-add/
   SKILL.md
   dryrun.mjs
@@ -163,6 +167,8 @@ AGENTS.md
 自有 skill 包含脚本时，须在 skill 根目录提供 `dryrun.mjs`；纯说明 skill 无需添加。Dryrun 只检查环境和必要配置，不执行实际业务操作，错误由各个 skill 自行说明。
 
 `copilot-api` 替代原本的 `claude-init`，远程 `auto_sync=true`，默认安装技能说明及启动脚本模板。调用时安装本地网关、引导登录，并按用户选择配置 Claude Code / Codex；安装 skill 本身只检查 Node.js 与 npm，不启动网关或改写客户端配置。Windows 模板使用兼容 GBK 的 ASCII / CRLF，macOS / Linux 模板使用 LF。
+
+`dev-directory` 和 `formula-display` 默认自动安装到生效的 agents。前者约定项目目录、conda 环境和启动入口；后者区分 CLI 的 Unicode 公式与文件中的 LaTeX。两者均为纯说明 skill，无需 dryrun。
 
 `paper-add`、`paper-read` 和 `zotero-init` 从本机技能迁入。前两者保留 Python 标准库脚本，使用 Windows conda base（`~\miniconda3\python.exe`）；各自的 `dryrun.mjs` 检查 Zotero 路径与凭据，`paper-read` 还检查 MinerU 密钥。`zotero-init` 是初始化说明，不需要检查脚本。`key.env` 不分发，推荐用环境变量提供 `MINERU_API_KEY`；Zotero 凭据支持环境变量或现有 Claude MCP 配置。初始化说明当前针对 Claude Code，跨 agent 安装不自动注册 MCP。
 
