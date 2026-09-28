@@ -1,6 +1,6 @@
 ---
 name: pdf-analyze
-description: Use this skill only when a local PDF needs MinerU parsing and its adjacent .mineru cache is missing, incomplete, stale for the request, or the user explicitly asks to reparse.
+description: Read, inspect, summarize, extract, or analyze local PDFs using cached MinerU output first; parse only when the cache is missing, incomplete, stale, or explicitly requested. Also use when moving or renaming a local PDF to keep its cache alongside it.
 ---
 
 # PDF Analyze
@@ -13,11 +13,11 @@ When a task requires reading a local PDF, first look for cached MinerU output at
 <pdf parent>/.mineru/<pdf file stem>/
 ```
 
-If the cache exists and contains extracted Markdown, JSON, or text, read from the cache first. Call MinerU only when the cache is missing, incomplete, or the user explicitly asks to reparse.
+If the cache exists and contains usable extracted Markdown, JSON, or text, read from the cache first. Call MinerU only when the cache is missing, incomplete, stale for the request, or the user explicitly asks to reparse.
 
 ## MinerU Parse
 
-Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Run the helper with Python 3.10+:
+Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Run the helper with system Python 3.10+: use `py -3` or the system `python` on Windows, and system `python3` on Linux/macOS in place of `<python>` below. The helper uses only the standard library and does not use a project's venv.
 
 ```bash
 <python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf
@@ -44,8 +44,6 @@ Useful options:
 <python> "<skill-dir>/scripts/mineru_parse.py" /path/to/file.pdf --disable-formula --disable-table
 ```
 
-Use the active project's Python environment when available. For development in Everything Harness, use `.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on Linux/macOS. Otherwise, select the available Python 3 interpreter for the current system.
-
 ## Reading Cached Results
 
 Prefer files in this order when available:
@@ -56,3 +54,7 @@ Prefer files in this order when available:
 4. Other extracted assets only when needed
 
 Use `rg --files <pdf parent>/.mineru/<pdf file stem>` to inspect the cache without reading every extracted file into context.
+
+## Moving or Renaming PDFs
+
+When moving or renaming a PDF, move its MinerU cache alongside it when present. For `<dir>/<name>.pdf`, the cache is `<dir>/.mineru/<name>/`; if the PDF becomes `<new-dir>/<new-name>.pdf`, move the cache to `<new-dir>/.mineru/<new-name>/`.

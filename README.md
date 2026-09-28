@@ -8,6 +8,8 @@
 把每个 skill 直接放在 `content/<skill_name>/SKILL.md`，脚本和资源也放在对应目录内。
 需要同步的公共规则编辑 `content/AGENTS.md`；根目录 `AGENTS.md` 仅用于本项目开发约定。
 已包含 `content/pdf-analyze/`。MinerU 密钥使用环境变量 `MINERU_API_KEY` 或该 skill 内本机的 `key.env`，密钥文件已忽略提交。
+Skill 由 agent 动态加载，规则只保存在各自的 `SKILL.md`，不追加到 `AGENTS.md`。
+Skill 的脚本使用系统 Python：Windows 使用 `py -3` 或系统 `python`，Linux / macOS 使用系统 `python3`；不使用本项目或其他项目的 venv。
 
 Windows 只提供一个入口，`install.cmd` 使用 GBK / 代码页 936：
 
@@ -133,7 +135,7 @@ skills.db           本机状态，忽略提交
 
 测试使用隔离临时目录，不修改个人 agent 配置：
 
-开发和运行项目脚本统一使用项目 `.venv` 中的 Python；依赖通过该解释器的 `-m pip` 安装。
+安装器、TUI、SQLite 维护脚本和项目测试使用项目 `.venv` 中的 Python；这些程序的依赖通过该解释器的 `-m pip` 安装。`content/` 内的 skill 脚本独立使用系统 Python。
 首次准备环境按当前系统选择 `install.cmd`（Windows）或 `sh install.sh`（Linux / macOS）。
 
 ```bat
