@@ -3,13 +3,15 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, changeManifest, parseArgs, runCommand, runDryruns, sync, validateManifest } from '../sync.mjs';
 
 const agents = [...AGENTS.keys()];
-const entry = (name, targets = agents, source = 'example/skills') => ({ name, source, agents: targets });
+const entry = (name, targets = agents, source = 'example/skills', auto_sync = true) => ({ name, source, agents: targets, auto_sync });
 const catalog = { skills: [entry('one'), entry('two')] };
+const stateRoot = mkdtempSync(join(tmpdir(), 'sync-state-test-'));
+after(() => rmSync(stateRoot, { recursive: true, force: true }));
 const record = (name, targets = agents, source = 'example/skills', sourceType = 'github') => ({
   name, source, sourceType, scope: 'global', path: join(tmpdir(), 'fixture-installed', name), agents: targets.map((agent) => AGENTS.get(agent)),
 });
@@ -24,6 +26,7 @@ function harness({ manifest = catalog, installed = [], failure, result, dryrun }
   return {
     calls, events, logs, installed,
     dependencies: {
+      stateDir: mkdtempSync(join(stateRoot, 'profile-')),
       fetchManifest: () => { events.push('fetch'); return JSON.stringify(manifest); },
       log: (text) => logs.push(text),
       runDryruns: (entries) => { events.push('dryrun'); dryrun?.(entries); },
@@ -95,6 +98,110 @@ test('invalid manifests and arguments fail before install', () => {
   assert.deepEqual(validateManifest({ skills: [] }), { skills: [] });
 });
 
+const localPath = (fixture) => join(fixture.dependencies.stateDir, 'skill.json');
+const localManifest = (fixture) => JSON.parse(readFileSync(localPath(fixture), 'utf8'));
+const setLocal = (fixture, skills) => writeFileSync(localPath(fixture), JSON.stringify({ skills }, null, 2) + '\n');
+
+test('auto_sync defaults and local overrides control sync, update and dryrun; sync preserves overrides', () => {
+  const manifest = { skills: [entry('one'), entry('two', agents, 'example/skills', false), entry('three')] };
+  const fixture = harness({ manifest });
+  setLocal(fixture, [entry('one', agents, 'example/skills', false), entry('two')]);
+  const before = readFileSync(localPath(fixture), 'utf8');
+  const checked = [];
+  fixture.dependencies.runDryruns = (entries) => checked.push(entries.map((item) => item.name));
+  fixture.run();
+  assert.deepEqual(fixture.calls[1].slice(3, 5), ['two', 'three']);
+  fixture.run(['--update', '--agents', 'codex']);
+  assert.deepEqual(fixture.calls.at(-1).slice(3, 5), ['two', 'three']);
+  fixture.run(['--dryrun']);
+  assert.deepEqual(checked, [['two', 'three'], ['two', 'three'], ['two', 'three']]);
+  assert.equal(readFileSync(localPath(fixture), 'utf8'), before);
+  assert.ok(!fixture.calls.some((args) => args[0] === 'remove'));
+});
+
+test('first sync initializes an empty local manifest so future remote defaults still take effect', () => {
+  const manifest = { skills: [entry('one', agents, 'example/skills', false)] };
+  const fixture = harness({ manifest });
+  fixture.run();
+  assert.deepEqual(localManifest(fixture), { skills: [] });
+  assert.equal(fixture.calls.length, 0);
+  manifest.skills[0].auto_sync = true;
+  fixture.run();
+  assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 1);
+});
+
+test('local add and del operate first, save overrides, and never use Git or mutate the remote catalog', () => {
+  const manifest = { skills: [entry('one', agents, 'example/skills', false), entry('two')] };
+  const fixture = harness({ manifest });
+  const before = JSON.stringify(manifest);
+  fixture.dependencies.runGit = () => assert.fail('local mode must not call Git');
+  fixture.dependencies.runDryruns = () => assert.equal(existsSync(localPath(fixture)), false);
+  fixture.run(['--add', 'one', '--local']);
+  assert.equal(localManifest(fixture).skills[0].auto_sync, true);
+  fixture.run(['--local', '--del', 'one']);
+  assert.equal(localManifest(fixture).skills[0].auto_sync, false);
+  assert.equal(fixture.calls.filter((args) => args[0] === 'remove').length, 1);
+  fixture.dependencies.runDryruns = () => {};
+  fixture.run();
+  assert.ok(!fixture.installed.some((item) => item.name === 'one'));
+  assert.equal(JSON.stringify(manifest), before);
+});
+
+test('failed local installs, dryruns, and removals preserve settings; retry completes them', () => {
+  for (const fixture of [harness({ failure: (args) => args[0] === 'add' }), harness({ dryrun: () => { throw new Error('environment'); } })]) {
+    setLocal(fixture, [entry('one', agents, 'example/skills', false)]);
+    const before = readFileSync(localPath(fixture), 'utf8');
+    assert.throws(() => fixture.run(['--local', '--add', 'one']));
+    assert.equal(readFileSync(localPath(fixture), 'utf8'), before);
+  }
+  const fixture = harness({ installed: [record('one')], failure: (args) => args[0] === 'remove' });
+  setLocal(fixture, [entry('one')]);
+  const before = readFileSync(localPath(fixture), 'utf8');
+  assert.throws(() => fixture.run(['--local', '--del', 'one']), /删除失败/);
+  assert.equal(readFileSync(localPath(fixture), 'utf8'), before);
+  fixture.installed.length = 0;
+  fixture.run(['--local', '--del', 'one']);
+  assert.equal(localManifest(fixture).skills[0].auto_sync, false);
+});
+
+test('local auto_sync changes only overrides; list shows remote, local and effective states', () => {
+  const fixture = harness({ manifest: { skills: [entry('one'), entry('two', agents, 'example/skills', false), entry('three')] } });
+  fixture.run(['--local', '--auto_sync', 'false', 'one']);
+  fixture.run(['--auto_sync', 'true', 'two', '--local']);
+  assert.equal(fixture.calls.length, 0);
+  fixture.run(['--local', '--list', '--agents', 'codex']);
+  const rows = fixture.logs.at(-1).split('\n').map((line) => line.split('\t'));
+  assert.deepEqual(rows.map((row) => [row[0], ...row.slice(-3)]), [
+    ['one', 'true', 'false', 'false'], ['two', 'false', 'true', 'true'], ['three', 'true', '跟随远程', 'true'],
+  ]);
+  assert.ok(rows.every((row) => row[2] === 'codex'));
+});
+
+test('invalid boolean settings, local manifests and auto_sync arguments fail before operations', () => {
+  for (const value of [undefined, 'true', 'false', null, 0]) {
+    const fixture = harness({ manifest: { skills: [{ ...entry('one'), auto_sync: value }] } });
+    assert.throws(() => fixture.run(), /auto_sync/);
+    assert.equal(fixture.calls.length, 0);
+  }
+  const fixture = harness();
+  writeFileSync(localPath(fixture), '{bad');
+  assert.throws(() => fixture.run(), /有效 JSON/);
+  assert.equal(fixture.calls.length, 0);
+  for (const args of [['--auto_sync', 'yes', 'one'], ['--auto_sync', 'false'], ['--auto_sync', 'true', 'one', '--agents', 'codex'],
+    ['--auto_sync', 'true', 'one', '--update'], ['--local', '--local', '--list'], ['--local', '--add', 'owner/repo', 'one']]) {
+    assert.throws(() => parseArgs(args));
+  }
+});
+
+test('concurrent local changes are preserved and unknown names fail before touching installations', () => {
+  const fixture = harness({ dryrun: () => setLocal(fixture, [entry('two', agents, 'example/skills', false)]) });
+  assert.throws(() => fixture.run(['--local', '--add', 'one']), /已被修改/);
+  assert.deepEqual(localManifest(fixture).skills.map((item) => item.name), ['two']);
+  const other = harness();
+  assert.throws(() => other.run(['--local', '--add', 'one', 'unknown']), /不存在/);
+  assert.equal(other.calls.length, 0);
+});
+
 test('CLI errors and incomplete add results cannot publish success', () => {
   const failed = harness({ failure: (args) => args[0] === 'add' });
   assert.throws(() => failed.run(), /example\/skills.*失败/);
@@ -134,7 +241,7 @@ function repository(t, manifest = { skills: [entry('one', ['codex'])] }) {
   const git = (args) => runCommand('git', args, { cwd: root });
   git(['init', '-b', 'main']); git(['config', 'user.name', 'Skill Test']); git(['config', 'user.email', 'test@example.invalid']);
   git(['config', 'core.hooksPath', join(base, 'no-hooks')]); git(['config', 'commit.gpgsign', 'false']);
-  writeFileSync(join(root, 'skills.json'), JSON.stringify(manifest, null, 2) + '\n');
+  writeFileSync(join(root, 'skill.json'), JSON.stringify(manifest, null, 2) + '\n');
   writeFileSync(join(root, 'sync.mjs'), '// test repository\n');
   git(['add', '.']); git(['commit', '-m', 'Initial']); git(['remote', 'add', 'origin', remote]); git(['push', '-u', 'origin', 'main']);
   return root;
@@ -151,23 +258,38 @@ function managed(root) {
   };
 }
 
-const remoteManifest = (options) => JSON.parse(runCommand('git', ['--git-dir', options.repositoryUrl, 'show', 'main:skills.json']));
+const remoteManifest = (options) => JSON.parse(runCommand('git', ['--git-dir', options.repositoryUrl, 'show', 'main:skill.json']));
+
+test('remote auto_sync commits only the flag, preserves local overrides and performs no installation', (t) => {
+  const options = managed(repository(t)), fixture = harness();
+  setLocal(fixture, [entry('one')]);
+  const before = readFileSync(localPath(fixture), 'utf8');
+  fixture.run(['--auto_sync', 'false', 'one'], options);
+  assert.equal(remoteManifest(options).skills[0].auto_sync, false);
+  assert.equal(fixture.calls.length, 0);
+  assert.equal(readFileSync(localPath(fixture), 'utf8'), before);
+  const head = runCommand('git', ['--git-dir', options.repositoryUrl, 'rev-parse', 'main']);
+  fixture.run(['--auto_sync', 'false', 'one'], options);
+  assert.equal(runCommand('git', ['--git-dir', options.repositoryUrl, 'rev-parse', 'main']), head);
+  fixture.run(['--auto_sync', 'true', 'one'], options);
+  assert.equal(remoteManifest(options).skills[0].auto_sync, true);
+});
 
 test('remote add and del prepare their own checkout, operate locally first, commit only manifest, and push', (t) => {
   const root = repository(t), fixture = harness({ installed: [record('one', ['codex'])] });
   const options = managed(root);
   const git = (args) => runCommand('git', args, { cwd: root });
   writeFileSync(join(root, 'unrelated.txt'), 'keep staged'); git(['add', 'unrelated.txt']);
-  const before = readFileSync(join(root, 'skills.json'), 'utf8');
+  const before = readFileSync(join(root, 'skill.json'), 'utf8');
   fixture.dependencies.runDryruns = () => { fixture.events.push('dryrun'); assert.equal(remoteManifest(options).skills.length, 1); };
   options.runGit = (command, args, execution) => { fixture.events.push(`git:${args[0]}`); return runCommand(command, args, execution); };
   fixture.run(['--add', 'third/repo', 'two', '--agents', 'codex'], options);
   assert.ok(fixture.events.indexOf('add') < fixture.events.indexOf('dryrun'));
   assert.ok(fixture.events.indexOf('dryrun') < fixture.events.indexOf('git:commit'));
   assert.ok(fixture.events.indexOf('git:commit') < fixture.events.indexOf('git:push'));
-  assert.equal(runCommand('git', ['--git-dir', options.repositoryUrl, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main']).trim(), 'skills.json');
+  assert.equal(runCommand('git', ['--git-dir', options.repositoryUrl, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main']).trim(), 'skill.json');
   assert.equal(git(['diff', '--cached', '--name-only']).trim(), 'unrelated.txt');
-  assert.equal(readFileSync(join(root, 'skills.json'), 'utf8'), before);
+  assert.equal(readFileSync(join(root, 'skill.json'), 'utf8'), before);
   assert.deepEqual(remoteManifest(options).skills.map((item) => item.name), ['one', 'two']);
   assert.deepEqual(readdirSync(options.tempDir), []);
   fixture.events.length = 0;
@@ -178,7 +300,7 @@ test('remote add and del prepare their own checkout, operate locally first, comm
 });
 
 test('failed installs, dryruns and removals do not change the Git manifest', (t) => {
-  const root = repository(t), before = readFileSync(join(root, 'skills.json'), 'utf8');
+  const root = repository(t), before = readFileSync(join(root, 'skill.json'), 'utf8');
   const options = managed(root);
   for (const fixture of [harness({ failure: (args) => args[0] === 'add' }), harness({ dryrun: () => { throw new Error('environment'); } })]) {
     assert.throws(() => fixture.run(['--add', 'third/repo', 'two'], options));
@@ -203,7 +325,7 @@ test('commit or push failures preserve work; rerunning the same command publishe
   }
   const saved = readdirSync(options.tempDir);
   assert.equal(saved.length, 2);
-  assert.ok(saved.every((folder) => JSON.parse(readFileSync(join(options.tempDir, folder, 'skills.json'))).skills.length === 2));
+  assert.ok(saved.every((folder) => JSON.parse(readFileSync(join(options.tempDir, folder, 'skill.json'))).skills.length === 2));
   fixture.run(['--add', 'third/repo', 'two', '--agents', 'codex'], options);
   assert.equal(remoteManifest(options).skills.length, 2);
   assert.equal(fixture.calls.filter((args) => args[0] === 'add').length, 1);
@@ -211,9 +333,9 @@ test('commit or push failures preserve work; rerunning the same command publishe
 
 test('dirty user checkouts do not affect remote management; shared agent deletion is explicit', (t) => {
   const root = repository(t), fixture = harness(), options = managed(root);
-  writeFileSync(join(root, 'skills.json'), JSON.stringify(catalog));
+  writeFileSync(join(root, 'skill.json'), JSON.stringify(catalog));
   fixture.run(['--add', 'third/repo', 'two'], { ...options, cwd: root });
-  assert.equal(readFileSync(join(root, 'skills.json'), 'utf8'), JSON.stringify(catalog));
+  assert.equal(readFileSync(join(root, 'skill.json'), 'utf8'), JSON.stringify(catalog));
   assert.deepEqual(remoteManifest(options).skills.map((item) => item.name), ['one', 'two']);
   assert.throws(() => changeManifest(catalog, parseArgs(['--del', 'one', '--agents', 'codex'])), /共用安装目录/);
   const { next } = changeManifest(catalog, parseArgs(['--del', 'one', '--agents', 'claude-code']));
@@ -246,7 +368,7 @@ test('del can retry publication after local removal already succeeded', (t) => {
 test('a concurrent remote edit rejects push; retry preserves it and applies the requested addition', (t) => {
   const root = repository(t), options = managed(root), fixture = harness();
   fixture.dependencies.runDryruns = () => {
-    writeFileSync(join(root, 'skills.json'), JSON.stringify({ skills: [entry('one', ['codex']), entry('concurrent')] }, null, 2) + '\n');
+    writeFileSync(join(root, 'skill.json'), JSON.stringify({ skills: [entry('one', ['codex']), entry('concurrent')] }, null, 2) + '\n');
     runCommand('git', ['commit', '-am', 'Concurrent edit'], { cwd: root });
     runCommand('git', ['push'], { cwd: root });
   };

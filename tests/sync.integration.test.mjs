@@ -53,10 +53,11 @@ test('real npx skills discovery, global installation, missing agents and update 
 
   // Exercise the synchronizer with a real GitHub source and real list/add JSON.
   const catalog = {
-    skills: [{ source: 'anthropics/skills', name: 'pdf', agents: ['claude-code', 'codex', 'github-copilot'] }],
+    skills: [{ source: 'anthropics/skills', name: 'pdf', agents: ['claude-code', 'codex', 'github-copilot'], auto_sync: true }],
   };
   const calls = [];
   const dependencies = {
+    stateDir: join(profile, '.everything-harness'),
     sharedSkillsDir: join(profile, '.agents', 'skills'),
     fetchManifest: () => JSON.stringify(catalog),
     runSkills: (args) => { calls.push(args); return runSkills(args); },
@@ -76,6 +77,14 @@ test('real npx skills discovery, global installation, missing agents and update 
   assert.equal(remote.sourceType, 'github');
   assert.equal(remote.agents.includes('Claude Code'), true);
   assert.equal(installed.some((entry) => entry.name === 'pdf-analyze'), true);
+  sync(['--local', '--del', 'pdf'], dependencies);
+  assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf'), false);
+  const afterDelete = calls.filter((args) => args[0] === 'add').length;
+  sync([], dependencies);
+  assert.equal(calls.filter((args) => args[0] === 'add').length, afterDelete);
+  sync(['--local', '--add', 'pdf'], dependencies);
+  assert.equal(JSON.parse(readFileSync(join(dependencies.stateDir, 'skill.json'))).skills[0].auto_sync, true);
+  assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf'), true);
   runSkills(['remove', 'pdf-analyze', '-g', '--yes', '--agent', 'codex', 'github-copilot']);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf-analyze'), false);
 });

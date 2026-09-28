@@ -1,6 +1,6 @@
 # Everything Harness
 
-个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skills.json`；本机安装、更新和删除交给系统的 `npx skills`。
+个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skill.json`；本机安装、更新和删除交给系统的 `npx skills`。
 
 ## 安装与检查
 
@@ -26,10 +26,10 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 
 所有命令使用远程 `main` 的清单。`--agents` 支持 `claude-code`、`codex`、`github-copilot`，只选择清单中适用于这些 agents 的 skill。
 
-- 普通运行全局安装缺失的 skill / agent 组合，已安装的跳过。
-- `--update` 仅重装清单内指定目标的 skill，不运行无范围限制的全局更新。
-- 安装或更新后，运行本次清单内所有 skill 的 `dryrun.mjs`，包括跳过安装的 skill。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
-- `--dryrun` 只检查已安装的 skill，不安装、不更新；修复环境后可反复运行。
+- 普通运行只同步生效 `auto_sync=true` 的 skill，全局补齐缺失的 skill / agent 组合，已安装的跳过。
+- `--update` 仅重装开启自动同步且匹配目标的 skill，不运行无范围限制的全局更新。
+- 安装或更新后，运行本次选中的所有 skill 的 `dryrun.mjs`，包括已安装而跳过的 skill。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
+- `--dryrun` 只检查开启自动同步的 skill，不安装、不更新；修复环境后可反复运行。
 - 无 dryrun 的纯说明 skill 会跳过检查。自有 skill 包含脚本却缺少 dryrun 会报错；第三方若提供 `dryrun.mjs`，同样执行。
 - 来源冲突会在安装前报错；旧安装器留下的无来源记录允许通过显式安装接管。
 
@@ -52,15 +52,41 @@ curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/m
 curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list --agents codex
 ```
 
-`--add owner/repo skill-one skill-two` 可一次增加多个 skill；省略 `--agents` 时选择全部三个。已有条目合并 agents。`--del skill-one skill-two` 同样支持多个名称；省略 `--agents` 时移除这些 skill 的全部关联，最后一个关联删除后才移除整条记录。删除不影响 `skills/` 中的源代码。`--list` 显示 skill、来源和 agents。
+`--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`；省略 `--agents` 时选择全部三个。已有条目合并 agents，保留原开关。`--del skill-one skill-two` 同样支持多个名称；省略 `--agents` 时移除这些 skill 的全部关联，最后一个关联删除后才移除整条记录。删除不影响 `skills/` 中的源代码。
 
-脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skills.json` 并推送，成功后清理临时副本。
+`--list` 显示 skill、来源、agents，以及远程 `auto_sync`、本机 `auto_sync` 和生效 `auto_sync`。本机没有覆盖时显示“跟随远程”；不因开关为 false 隐藏条目。
+
+脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skill.json` 并推送，成功后清理临时副本。
 
 失败后按提示修复并重新运行同一条命令，脚本自动重新获取清单、补齐操作和提交推送。已完成的本机操作保留；commit 或 push 失败时保留操作副本并显示路径。远程发生并发改动时正常拒绝推送，不强推，不修改用户现有工作区。
 
 Codex 与 Copilot 不能独立卸载同一份共享内容：若清单仍给另一个保留关联，需同时选择 `--agents codex github-copilot`。如果 CLI 因其他 agent 仍在使用而保留目标目录，删除检查会报错，不创建清单 commit。
 
-普通同步不会自动清理清单外的 skill；手动移除但仍在清单中的项目会在下次同步时补回。`--add`、`--del`、`--list`、`--update`、`--dryrun` 互斥。
+普通同步不会自动清理清单外的 skill；手动移除但仍开启自动同步的项目会在下次同步时补回。`--add`、`--del`、`--auto_sync`、`--list`、`--update`、`--dryrun` 互斥。
+
+## 自动同步与本机选择
+
+远程 `skill.json` 的 `auto_sync` 是默认值。每次同步会读取 `~/.everything-harness/skill.json`：同名条目的 `auto_sync` 覆盖远程默认，没有本机条目就跟随远程。首次运行只创建 `{"skills": []}`，以后不会覆盖已有选择。来源和 agents 始终使用最新远程清单，本机文件只覆盖开关；从本机文件移除某条记录即可恢复跟随远程。
+
+在同一个远程入口后加参数即可操作。以下命令仍使用远程脚本，无需下载其他脚本：
+
+```powershell
+# 关闭 pdf-analyze 的远程默认自动同步：自动 commit / push
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --auto_sync false pdf-analyze
+
+# 只在本机安装 pdf-analyze，dryrun 成功后保存 auto_sync=true
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add pdf-analyze
+
+# 只在本机删除 pdf-analyze，成功后保存 auto_sync=false，后续同步不会装回
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --del pdf-analyze
+
+# 只修改本机开关，保留当前安装
+curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --auto_sync false pdf-analyze
+```
+
+将 `false` 换成 `true` 即开启。`--auto_sync` 只修改开关，不安装或删除；设为 true 后，下次同步才补齐。本机操作不需要 GitHub 写入权限，也不提交仓库。`--local` 可放在命令末尾；普通同步始终考虑本机覆盖，`--list` 始终同时展示远程和本机状态。
+
+本机 add/del 只接收远程清单已有的 skill 名称，支持一次多个，按清单中的全部 agents 操作。开关按整个 skill 生效，因此本机 add/del 和 `--auto_sync` 不接受 `--agents`；同步和列表仍支持 agent 筛选。失败时不修改本机配置，修复后重跑原命令。
 
 ## 内容与开发约定
 
@@ -72,7 +98,8 @@ Codex 与 Copilot 不能独立卸载同一份共享内容：若清单仍给另�
     {
       "name": "pdf-analyze",
       "source": "Charbddlie/everything-harness",
-      "agents": ["claude-code", "codex", "github-copilot"]
+      "agents": ["claude-code", "codex", "github-copilot"],
+      "auto_sync": true
     }
   ]
 }
@@ -87,7 +114,7 @@ skills/pdf-analyze/
   scripts/mineru_parse.mjs
 skills/skill-manage/
   SKILL.md
-skills.json
+skill.json
 sync.mjs
 tests/
 AGENTS.md
