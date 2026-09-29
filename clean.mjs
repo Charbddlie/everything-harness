@@ -3,9 +3,6 @@ import { existsSync, lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
-const DIRECTORIES = ['.agents', '.codex', '.copilot'];
-const INSTRUCTIONS = ['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'];
-
 async function loadRuntime() {
   if (!import.meta.main || process.argv[1] !== '-') return import('./sync.mjs');
   const source = execFileSync(process.platform === 'win32' ? 'curl.exe' : 'curl',
@@ -39,19 +36,18 @@ export async function clean(args, dependencies = {}) {
   for (const root of roots) {
     if (existsSync(root) && !statSync(root).isDirectory()) throw new Error(`清理根目录不是目录：${root}`);
   }
-  const { fetchManifest, validateManifest, prepareInstructionCleanup, applyInstructionCleanup, removeDirectory } = await loadRuntime();
+  const { fetchManifest, validateManifest, cleanupPaths, prepareInstructionCleanup, applyInstructionCleanup, removeDirectory } = await loadRuntime();
   const manifest = validateManifest(JSON.parse((dependencies.fetchManifest ?? fetchManifest)()));
   const names = new Set([...manifest.skill.map(({ name }) => name),
     ...(manifest.deleted ?? []).filter(({ type_name }) => type_name.startsWith('skill:')).map(({ type_name }) => type_name.slice(6))]);
-  const paths = [], instructions = [];
+  const paths = new Set(), instructions = [];
   for (const root of roots) {
-    for (const directory of DIRECTORIES) for (const name of names) {
-      const path = join(root, directory, 'skills', name);
-      if (lstatSync(path, { throwIfNoEntry: false })) paths.push(path);
+    const targets = cleanupPaths({ homeDir: root, env: root === userHome ? dependencies.env ?? process.env : {} });
+    for (const directory of targets.skills) for (const name of names) {
+      const path = join(directory, name);
+      if (lstatSync(path, { throwIfNoEntry: false })) paths.add(path);
     }
-    for (const directory of [root, ...DIRECTORIES.map((name) => join(root, name))]) for (const name of INSTRUCTIONS) {
-      instructions.push(join(directory, name));
-    }
+    instructions.push(...targets.instructions);
   }
   const writes = prepareInstructionCleanup(instructions);
   const failures = [];
@@ -64,7 +60,7 @@ export async function clean(args, dependencies = {}) {
   }
   failures.push(...applyInstructionCleanup(writes, dryrun, log));
   if (failures.length) throw new Error(`清理失败；已完成操作保留：\n${failures.join('\n')}`);
-  log(`${dryrun ? '预览' : '清理'}完成：${paths.length} 个 skill 路径，${writes.size} 个指令文件。`);
+  log(`${dryrun ? '预览' : '清理'}完成：${paths.size} 个 skill 路径，${writes.size} 个指令文件。`);
 }
 
 if (import.meta.main) {

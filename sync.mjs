@@ -164,9 +164,7 @@ export function homeDependencies(home, dependencies = {}) {
     CODEX_HOME: join(homeDir, '.codex'), COPILOT_HOME: join(homeDir, '.copilot'),
   });
   return { ...dependencies, env, gitEnv: dependencies.gitEnv ?? baseEnv, homeDir,
-    stateDir: join(homeDir, '.everything-harness'), sharedSkillsDir: join(homeDir, '.agents', 'skills'),
-    skillLoadDirs: relative(originalHome, homeDir) === '' ? undefined
-      : { codex: join(homeDir, '.codex', 'skills'), 'github-copilot': join(homeDir, '.copilot', 'skills') } };
+    stateDir: join(homeDir, '.everything-harness') };
 }
 
 function objectKeys(value, keys, label) {
@@ -312,12 +310,27 @@ export function validateFragments(value) {
   return value;
 }
 
-export function instructionPaths(agents, { env = process.env, homeDir = homedir() } = {}) {
-  const paths = {
-    codex: join(env.CODEX_HOME || join(homeDir, '.codex'), 'AGENTS.md'),
-    'github-copilot': join(env.COPILOT_HOME || join(homeDir, '.copilot'), 'copilot-instructions.md'),
+function agentDirectories({ env = process.env, homeDir = homedir() } = {}) {
+  return {
+    codex: env.CODEX_HOME || join(homeDir, '.codex'),
+    'github-copilot': env.COPILOT_HOME || join(homeDir, '.copilot'),
   };
-  return agents.map((agent) => paths[agent]);
+}
+
+export function instructionPaths(agents, dependencies = {}) {
+  const directories = agentDirectories(dependencies);
+  return agents.map((agent) => join(directories[agent], agent === 'codex' ? 'AGENTS.md' : 'copilot-instructions.md'));
+}
+
+export function cleanupPaths(dependencies = {}) {
+  const home = dependencies.homeDir ?? homedir();
+  const directories = [...new Set(['.agents', '.codex', '.copilot'].map((name) => join(home, name))
+    .concat(Object.values(agentDirectories(dependencies))))];
+  return {
+    skills: directories.map((directory) => join(directory, 'skills')),
+    instructions: [home, ...directories].flatMap((directory) =>
+      ['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'].map((name) => join(directory, name))),
+  };
 }
 
 export function renderFragments(original, fragments) {
@@ -435,8 +448,7 @@ function reportUnapplied(manifest, rules, appliedRules, dependencies, log) {
   const pendingRules = Object.keys(rules).filter((name) => !appliedRules.has(name));
   const members = new Set([...Object.values(manifest['sync-rules'] ?? {}), ...Object.values(rules)]
     .flatMap((entries) => entries.map(({ type_name }) => type_name)));
-  const home = dependencies.homeDir ?? homedir();
-  const directories = ['.agents', '.codex', '.copilot'].map((agent) => join(home, agent, 'skills'));
+  const directories = Object.values(agentDirectories(dependencies)).map((directory) => join(directory, 'skills'));
   const pendingSkills = manifest.skill.filter(({ name }) => !members.has(`skill:${name}`)
     && !directories.some((directory) => statSync(join(directory, name, 'SKILL.md'), { throwIfNoEntry: false })?.isFile()));
   if (pendingRules.length) log(`本次未应用的 rule：${pendingRules.map((name) => `rule:${name}`).join(', ')}`);
@@ -473,7 +485,7 @@ const entryExists = (path) => Boolean(lstatSync(path, { throwIfNoEntry: false })
 
 function checkSources(entries, context) {
   for (const entry of entries) {
-    for (const directory of [context.sharedSkillsDir, ...Object.values(context.skillLoadDirs ?? {})]) {
+    for (const directory of context.skillDirs) {
       const file = join(directory, entry.name, SOURCE_FILE);
       if (!existsSync(file)) continue;
       const { source } = parseJson(readFileSync(file, 'utf8'), file);
@@ -611,9 +623,9 @@ export function copySkill(entry, source, target, log = createProgressLogger()) {
 }
 
 function install(entries, prepared, context) {
+  checkSources(entries, { ...context, skillDirs: [context.legacySkillsDir] });
   context.log('应用 skill 到目标目录', { stage: true });
-  const directories = [context.sharedSkillsDir,
-    ...context.agents.flatMap((agent) => context.skillLoadDirs ? [context.skillLoadDirs[agent]] : [])];
+  const directories = context.skillDirs;
   for (const entry of entries) {
     const written = new Set();
     for (const directory of directories) {
@@ -625,26 +637,19 @@ function install(entries, prepared, context) {
       written.add(target);
       context.log(`安装：${entry.source} / ${entry.name} → ${target}`, { status });
     }
+    const legacy = join(context.legacySkillsDir, entry.name);
+    if (entryExists(legacy) && (!existsSync(legacy) || !written.has(realpathSync(legacy)))) {
+      const legacyContext = { ...context, skillDirs: [context.legacySkillsDir] };
+      remove([entry], legacyContext);
+    }
   }
 }
 
 function remove(entries, context, dryrun = false) {
   for (const entry of entries) {
-    const shared = join(context.sharedSkillsDir, entry.name);
-    const targets = context.skillLoadDirs
-      ? context.agents.map((agent) => join(context.skillLoadDirs[agent], entry.name)) : [shared];
-    if (!targets.some(entryExists) && !entryExists(shared)) continue;
-    const retained = context.skillLoadDirs
-      ? [...AGENTS.keys()].filter((agent) => !context.agents.includes(agent))
-        .map((agent) => join(context.skillLoadDirs[agent], entry.name)).filter(entryExists)
-      : context.agents.length < AGENTS.size && entryExists(shared) ? [shared] : [];
+    const targets = [...new Set(context.skillDirs.map((directory) => join(directory, entry.name)))];
     for (const target of targets) {
-      const aliasesRetained = entryExists(target) && !lstatSync(target).isSymbolicLink()
-        && retained.some((path) => existsSync(path) && realpathSync(path) === realpathSync(target));
-      check(!aliasesRetained, `${target} 的目标安装仍存在（由未选中 agent 共享），请同时选择所有共享 agents。`);
-    }
-    const removals = [...new Set([...targets, ...(context.skillLoadDirs && !retained.length ? [shared] : [])])];
-    for (const target of removals.filter(entryExists)) {
+      if (!entryExists(target)) continue;
       if (!dryrun) removeDirectory(target);
       context.log(`${dryrun ? '将' : ''}删除本机安装：${entry.name} → ${target}`, { status: entry.deleted ? '过期' : '删除' });
     }
@@ -839,7 +844,7 @@ function executePlans(plans, options, agents, dependencies, parentLog) {
     check(agents.length > 0, '生效 agents 为空；请先设置目标。');
     const skills = entries.filter(({ type }) => type === 'skill');
     const fragments = entries.filter(({ type }) => type === 'agents-md');
-    const context = skills.length ? makeContext(dependencies, log, agents) : null;
+    const context = skills.length ? makeContext(dependencies, log, agents, options.mode === 'del') : null;
     if (context) checkSources(skills, context);
     if (options.mode === 'add' && !dependencies.sourcesPrepared) {
       log('下载源码', { stage: true });
@@ -847,7 +852,7 @@ function executePlans(plans, options, agents, dependencies, parentLog) {
     }
     const names = fragments.map(({ name }) => name);
     const writes = options.mode === 'del'
-      ? prepareInstructionCleanup(names.length ? instructionPaths(agents, dependencies) : [], names)
+      ? prepareInstructionCleanup(names.length ? cleanupPaths(dependencies).instructions : [], names)
       : prepareFragments(fragments, agents, dependencies);
     if (options.mode === 'add') {
       (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log,
@@ -942,10 +947,11 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
   if (agentMode(options.mode)) log('agents 设置将在下次同步时生效；已有安装保留，本机 agents 覆盖仍优先。');
 }
 
-function makeContext(dependencies, log, agents) {
+function makeContext(dependencies, log, agents, cleanup = false) {
   check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
-  return { sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'),
-    skillLoadDirs: dependencies.skillLoadDirs, agents, log };
+  const directories = agentDirectories(dependencies);
+  return { skillDirs: cleanup ? cleanupPaths(dependencies).skills : agents.map((agent) => join(directories[agent], 'skills')),
+    legacySkillsDir: join(dependencies.homeDir ?? homedir(), '.agents', 'skills'), log };
 }
 
 export function sync(args, dependencies = {}) {
@@ -984,12 +990,13 @@ function syncCatalog(options, dependencies, log) {
     return;
   }
   const names = deletedEntries(manifest, 'agents-md').map(({ name }) => name);
-  const writes = prepareInstructionCleanup(names.length ? instructionPaths(agents, dependencies) : [], names);
+  const writes = prepareInstructionCleanup(names.length ? cleanupPaths(dependencies).instructions : [], names);
   const deleted = deletedEntries(manifest, 'skill');
   const context = makeContext(dependencies, log, agents);
-  checkSources(deleted, context);
+  const cleanupContext = makeContext(dependencies, log, agents, true);
+  checkSources(deleted, cleanupContext);
   log('清理 skill 和 sysprompt', { stage: true });
-  remove(deleted, context, dryrun);
+  remove(deleted, cleanupContext, dryrun);
   const cleanupFailures = applyInstructionCleanup(writes, dryrun, log, '过期');
   check(!cleanupFailures.length, `sysprompt 清理失败：${cleanupFailures.join('\n')}`);
   log('下载源码', { stage: true });

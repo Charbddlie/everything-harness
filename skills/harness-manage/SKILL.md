@@ -54,11 +54,11 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ## 路径与覆盖
 
-共享 skill 正文在 `<home>/.agents/skills/<name>`。显式 home 不同于用户主目录时，另为生效 agents 复制 `.codex/skills/<name>`、`.copilot/skills/<name>`。`home=~` 不额外创建 skill 副本，也不自动迁移已有入口。
+Skill 正文安装到生效 agents 的 `<home>/.codex/skills/<name>`、`<home>/.copilot/skills/<name>`，用户主目录和自定义 home 使用相同布局。省略 `--home` 时尊重 `CODEX_HOME`、`COPILOT_HOME`。对应 skill 安装成功后清理旧 `.agents/skills` 副本，下载或安装失败时旧副本保留。
 
 指令片段始终按生效 agents 写入 `<home>/.codex/AGENTS.md`、`<home>/.copilot/copilot-instructions.md`。省略 home 时尊重 `CODEX_HOME`、`COPILOT_HOME`；显式 home 优先。保留 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 之外的正文。
 
-Skill 每次同步完整覆盖，清理目标内的过时文件，保留未选中内容。`.eh-source.json` 保存来源，来源冲突时停止；无标记的同名目录按清单选中覆盖或删除，其他工具的锁文件不修改。自定义 home 删除时保留未选中 agent 的副本；用户主目录的共享正文须同时选择 Codex 和 Copilot 才能删除。
+Skill 每次同步完整覆盖，清理目标内的过时文件，保留清单外内容。`.eh-source.json` 保存来源，来源冲突时停止；无标记的同名目录按清单选中覆盖或删除，其他工具的锁文件保留。删除选中 skill 时检查当前 home 的 `.agents`、`.codex`、`.copilot` 及环境变量指定位置。片段清理覆盖这些目录及 home 根目录中的 `AGENTS.md`、`CLAUDE.md`、`copilot-instructions.md`，保留其他正文。
 
 ## 规则与检查
 
@@ -74,7 +74,7 @@ Skill 每次同步完整覆盖，清理目标内的过时文件，保留未选�
 
 普通同步依次显示“创建/更新本地配置”“清理 skill 和 sysprompt”“下载源码”。下载标题即时输出，每个来源完成后输出一行。`自动配置: <rule_name>` 使用一级编号，配置内的检查和应用使用 `n1.n2` 子编号，每项配置从 1 开始。清理信息仅针对实际存在的内容：过期项显示 `[过期]`，规则清理显示 `[删除]`；应用时显示 `[新增]` 或 `[更新]`，`[未命中]` 列出具体条件。
 
-同步以“完成”步骤收尾，按需列出“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态检查当前 home 下 `.agents/skills`、`.codex/skills`、`.copilot/skills`。未命中、失败、成员为空的规则及 `--dryrun` 中的规则均未应用。本机空数组会覆盖远程规则，界面会提示成员为空；`--local --add rule:auto` 可恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
+同步以“完成”步骤收尾，按需列出“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态检查当前 home 对应的 Codex 和 Copilot skill 目录。未命中、失败、成员为空的规则及 `--dryrun` 中的规则均未应用。本机空数组会覆盖远程规则，界面会提示成员为空；`--local --add rule:auto` 可恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
 
 dryrun 环境检查仅适用于自有来源，自有 skill 包含脚本时必须提供 `dryrun.mjs`。第三方 skill 完成源码结构校验后直接应用。检查只验证环境与配置，不上传文件或调用业务、计费 API。普通同步和 add 中，环境检查未通过只报告警告，仍应用内容并保存设置；显式 `--dryrun` 检查源码结构和自有 skill 环境，保留正式安装，检查失败返回非零。
 
@@ -106,6 +106,6 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --home "$PWD" --dryrun
 ```
 
-与 sync 不同，clean 的 `--home` 是额外目标，**始终同时清理用户主目录**。它删除两处 `.agents/skills`、`.codex/skills`、`.copilot/skills` 中远程活动项和删除项的所有同名 skill，不受来源标记或本机开关限制。
+clean 的 `--home` 是额外目标，始终同时清理用户主目录。它删除两处 `.agents/skills`、`.codex/skills`、`.copilot/skills` 及用户 agent 环境变量指定位置中，远程活动项和删除项的所有同名 skill，不受来源标记或本机开关限制。
 
 指令清理覆盖各根目录及上述三个子目录中的 `AGENTS.md`、`CLAUDE.md`、`copilot-instructions.md`，移除所有 eh 标记块，保留文件和其他正文。保留其他 skills、本机配置、锁文件和远程清单；再次同步会重新安装启用的内容。执行失败会显示路径，已完成操作不回滚。

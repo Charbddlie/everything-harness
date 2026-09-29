@@ -34,14 +34,14 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   assert.ok(!existsSync(home));
   run();
   assert.ok(logs.some((line) => line === '[one] 跳过：第三方 skill'));
-  for (const agent of ['.agents', '.codex', '.copilot']) {
+  for (const agent of ['.codex', '.copilot']) {
     assert.match(readFileSync(join(home, agent, 'skills', 'one', 'SKILL.md'), 'utf8'), /Version one/);
     put(join(home, agent, 'skills', 'one', 'stale.txt'), 'stale');
   }
   put(join(source, 'SKILL.md'), skillText('one', 'Version two'));
   git(['add', '.']); git(['commit', '--quiet', '-m', 'Update']);
   run();
-  for (const agent of ['.agents', '.codex', '.copilot']) {
+  for (const agent of ['.codex', '.copilot']) {
     assert.match(readFileSync(join(home, agent, 'skills', 'one', 'SKILL.md'), 'utf8'), /Version two/);
     assert.ok(!existsSync(join(home, agent, 'skills', 'one', 'stale.txt')));
   }
@@ -49,12 +49,12 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   put(join(source, 'SKILL.md'), skillText('one', 'Version three'));
   git(['add', '.']); git(['commit', '--quiet', '-m', 'Add unused third-party check']);
   run(['--dryrun']);
-  assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version two/);
+  assert.match(readFileSync(join(home, '.codex', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version two/);
   run();
-  assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version three/);
+  assert.match(readFileSync(join(home, '.codex', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version three/);
   assert.ok(!logs.some((line) => line.includes('Missing fixture setting')));
   run(['--local', '--del', 'skill:one']);
-  assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
+  assert.ok(['.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
   assert.ok(!readdirSync(root).some((name) => name.startsWith('eh-check-')));
 });
 

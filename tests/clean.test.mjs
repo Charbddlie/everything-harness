@@ -14,12 +14,19 @@ function fixture(t) {
   const home = join(root, 'user'), selected = join(root, 'selected'), logs = [];
   const manifest = { agents: ['codex'], skill: [{ name: 'active', source: 'example/skills' }],
     deleted: [{ type_name: 'skill:removed', source: 'example/skills' }, { type_name: 'agents-md:old-rule' }] };
-  const dependencies = { homeDir: home, cwd: root, log: (line) => logs.push(line), fetchManifest: () => JSON.stringify(manifest) };
+  const dependencies = { homeDir: home, cwd: root, env: {}, log: (line) => logs.push(line), fetchManifest: () => JSON.stringify(manifest) };
   return { root, home, selected, logs, manifest, dependencies, run: (args = []) => clean(args, dependencies) };
 }
 
 test('clean covers both roots, every supported directory, active and deleted names, but preserves other content', async (t) => {
   const f = fixture(t), originals = new Map();
+  f.dependencies.env = { CODEX_HOME: join(f.root, 'custom-codex'), COPILOT_HOME: join(f.root, 'custom-copilot') };
+  for (const directory of Object.values(f.dependencies.env)) {
+    for (const name of ['active', 'removed', 'unmanaged']) put(join(directory, 'skills', name, 'SKILL.md'), 'content');
+    const path = join(directory, 'AGENTS.md');
+    originals.set(path, `Before\r\n${block}\nAfter\n`);
+    put(path, originals.get(path));
+  }
   for (const root of [f.home, f.selected]) {
     for (const directory of ['.agents', '.codex', '.copilot']) {
       for (const name of ['active', 'removed', 'unmanaged']) {
@@ -50,6 +57,10 @@ test('clean covers both roots, every supported directory, active and deleted nam
     assert.equal(readFileSync(join(root, '.agents', '.skill-lock.json'), 'utf8'), 'Keep lock');
   }
   for (const [path] of originals) assert.equal(readFileSync(path, 'utf8'), 'Before\r\n\nAfter\n');
+  for (const directory of Object.values(f.dependencies.env)) {
+    for (const name of ['active', 'removed']) assert.ok(!existsSync(join(directory, 'skills', name)));
+    assert.ok(existsSync(join(directory, 'skills', 'unmanaged', 'SKILL.md')));
+  }
   await f.run(['--home', f.selected]);
   assert.match(f.logs.at(-1), /0 个 skill 路径，0 个指令文件/);
 });

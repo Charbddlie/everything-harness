@@ -21,10 +21,10 @@ function fixture(t, manifest = {
   const root = mkdtempSync(join(tmpdir(), 'eh-rules-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const calls = [], events = [], logs = [];
-  const shared = join(root, '.agents', 'skills');
+  const installed = join(root, '.codex', 'skills');
   const seed = (name, source = OWN_SOURCE) => {
-    put(join(shared, name, 'SKILL.md'), skillText(name));
-    put(join(shared, name, '.eh-source.json'), JSON.stringify({ source }));
+    put(join(installed, name, 'SKILL.md'), skillText(name));
+    put(join(installed, name, '.eh-source.json'), JSON.stringify({ source }));
   };
   const settings = join(root, 'state', 'harness.json');
   const target = join(root, '.codex', 'AGENTS.md');
@@ -48,7 +48,7 @@ function fixture(t, manifest = {
   };
   return { root, manifest, seed, calls, events, logs, settings, target, dependencies,
     get installed() {
-      return new Map((existsSync(shared) ? readdirSync(shared) : []).map((name) => [name, { path: join(shared, name) }]));
+      return new Map((existsSync(installed) ? readdirSync(installed) : []).map((name) => [name, { path: join(installed, name) }]));
     },
     read: () => JSON.parse(readFileSync(settings, 'utf8')),
     run: (args = []) => sync(args, dependencies) };

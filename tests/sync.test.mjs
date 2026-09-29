@@ -26,7 +26,7 @@ function fixture(t, manifest = { agents, skill: [entry('one'), entry('two')], 's
     },
   };
   return { root, home, tempDir, manifest, dependencies, logs, downloads,
-    shared: (name) => join(home, '.agents', 'skills', name),
+    installed: (name) => join(home, '.codex', 'skills', name),
     settings: join(home, '.everything-harness', 'harness.json'),
     run: (args = []) => sync(args, dependencies) };
 }
@@ -39,16 +39,16 @@ test('sync downloads each source once and installs exactly the checked content',
   f.run();
   assert.deepEqual(f.downloads, ['example/skills']);
   for (const { name } of f.manifest.skill) {
-    assert.equal(readFileSync(join(f.shared(name), 'checked.txt'), 'utf8'), 'checked');
-    put(join(f.shared(name), 'stale.txt'), 'stale');
+    assert.equal(readFileSync(join(f.installed(name), 'checked.txt'), 'utf8'), 'checked');
+    put(join(f.installed(name), 'stale.txt'), 'stale');
   }
-  put(join(f.shared('unmanaged'), 'SKILL.md'), 'Keep');
+  put(join(f.installed('unmanaged'), 'SKILL.md'), 'Keep');
   const lock = join(f.home, '.agents', '.skill-lock.json');
   put(lock, 'Keep lock');
   f.run();
   assert.equal(f.downloads.length, 2);
-  assert.ok(!existsSync(join(f.shared('one'), 'stale.txt')));
-  assert.equal(readFileSync(join(f.shared('unmanaged'), 'SKILL.md'), 'utf8'), 'Keep');
+  assert.ok(!existsSync(join(f.installed('one'), 'stale.txt')));
+  assert.equal(readFileSync(join(f.installed('unmanaged'), 'SKILL.md'), 'utf8'), 'Keep');
   assert.equal(readFileSync(lock, 'utf8'), 'Keep lock');
   assert.deepEqual(readdirSync(f.tempDir), []);
   assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
@@ -89,7 +89,7 @@ test('all rules share downloaded repositories and read fragments from the same s
   f.run();
   assert.deepEqual(f.downloads, [OWN_SOURCE, 'example/skills', OWN_SOURCE, 'example/skills']);
   assert.notEqual(snapshots[0], snapshots[2]);
-  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version 2/);
+  assert.match(readFileSync(join(f.installed('two'), 'SKILL.md'), 'utf8'), /Version 2/);
   assert.match(readFileSync(target, 'utf8'), /base 2[\s\S]*windows 2/);
   assert.deepEqual(readdirSync(f.tempDir), []);
 });
@@ -108,17 +108,17 @@ test('a failed source is attempted once across rules and retried on the next inv
   f.dependencies.fetchRepository = download;
   f.run();
   assert.deepEqual(f.downloads, ['example/skills']);
-  assert.ok(existsSync(f.shared('one')) && existsSync(f.shared('two')));
+  assert.ok(existsSync(f.installed('one')) && existsSync(f.installed('two')));
 });
 
 test('source conflict blocks downloads, replacement and deletion', (t) => {
   const f = fixture(t);
-  put(join(f.shared('one'), 'SKILL.md'), 'Keep');
-  put(join(f.shared('one'), '.eh-source.json'), '{"source":"other/repo"}');
+  put(join(f.installed('one'), 'SKILL.md'), 'Keep');
+  put(join(f.installed('one'), '.eh-source.json'), '{"source":"other/repo"}');
   assert.throws(() => f.run(), /来源冲突/);
   assert.throws(() => f.run(['--local', '--del', 'skill:one']), /来源冲突/);
   assert.equal(f.downloads.length, 0);
-  assert.equal(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), 'Keep');
+  assert.equal(readFileSync(join(f.installed('one'), 'SKILL.md'), 'utf8'), 'Keep');
   assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
 });
 
@@ -137,11 +137,11 @@ test('failed skill checks preserve content in dryrun but only warn during sync a
   const before = readFileSync(f.settings, 'utf8');
   assert.throws(() => f.run(['--dryrun']), /2 个 skill/);
   assert.ok(['one', 'two'].every((name) => f.logs.some((line) => line.includes(`failure-${name}`))));
-  for (const name of ['one', 'two']) assert.match(readFileSync(join(f.shared(name), 'SKILL.md'), 'utf8'), /Version one/);
+  for (const name of ['one', 'two']) assert.match(readFileSync(join(f.installed(name), 'SKILL.md'), 'utf8'), /Version one/);
   assert.equal(readFileSync(f.settings, 'utf8'), before);
   assert.ok(!existsSync(join(f.home, '.codex', 'AGENTS.md')));
   f.run();
-  for (const name of ['one', 'two']) assert.match(readFileSync(join(f.shared(name), 'SKILL.md'), 'utf8'), /Version two/);
+  for (const name of ['one', 'two']) assert.match(readFileSync(join(f.installed(name), 'SKILL.md'), 'utf8'), /Version two/);
   assert.ok(f.logs.some((line) => line.startsWith('[警告] 2 个 skill')));
   assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
   put(f.settings, '{"sync-rules":{"auto":[]}}');
@@ -153,7 +153,7 @@ test('invalid skill structure still blocks normal synchronization', (t) => {
   const f = fixture(t); f.run();
   f.dependencies.fetchRepository = (source, path) => put(join(path, 'skills', 'one', 'SKILL.md'), 'Invalid metadata');
   assert.throws(() => f.run(), /SKILL.md/);
-  assert.match(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), /Version one/);
+  assert.match(readFileSync(join(f.installed('one'), 'SKILL.md'), 'utf8'), /Version one/);
 });
 
 test('sync, dryrun and local add execute only own-source checks', (t) => {
@@ -174,8 +174,8 @@ test('sync, dryrun and local add execute only own-source checks', (t) => {
   f.run(['--local', '--add', 'example/skills', 'skill:two']);
   assert.equal(readFileSync(ownMarker, 'utf8'), 'ran\nran\n');
   assert.ok(!existsSync(thirdPartyMarker));
-  assert.ok(existsSync(join(f.shared('two'), 'dryrun.mjs')));
-  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version one/);
+  assert.ok(existsSync(join(f.installed('two'), 'dryrun.mjs')));
+  assert.match(readFileSync(join(f.installed('two'), 'SKILL.md'), 'utf8'), /Version one/);
   assert.ok(f.logs.some((line) => line === '[two] 跳过：第三方 skill'));
 });
 
@@ -237,7 +237,7 @@ test('empty agent selection skips checks and prevents explicit content mutations
   assert.equal(f.downloads.length, 0);
   for (const mode of ['--add', '--del']) assert.throws(() => f.run(['--local', mode, ...(mode === '--add' ? ['example/skills'] : []), 'skill:one']), /agents 为空/);
   f.run(['--local', '--add_agents', 'codex']);
-  f.run(); assert.ok(existsSync(f.shared('one')));
+  f.run(); assert.ok(existsSync(f.installed('one')));
 });
 
 test('skill source links cannot copy external files', (t) => {
@@ -280,7 +280,7 @@ test('remote own-skill and fragment additions reuse the publication checkout', (
   f.dependencies.fetchRepository = () => assert.fail('The publication checkout already contains the source');
   put(join(f.repository, 'agents-md', 'base.md'), 'Unpublished local edit');
   f.run(['--add', 'skill:two']);
-  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version one/);
+  assert.match(readFileSync(join(f.installed('two'), 'SKILL.md'), 'utf8'), /Version one/);
   f.run(['--add', 'agents-md:base']);
   assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
   assert.equal(readFileSync(join(f.repository, 'agents-md', 'base.md'), 'utf8'), 'Unpublished local edit');
@@ -300,7 +300,7 @@ test('remote add applies failed-check content before publishing without changing
     return runDryruns(...args);
   };
   f.dependencies.runGit = (command, args, options) => {
-    if (args[0] === 'commit') { events.push('commit'); assert.ok(existsSync(f.shared('two'))); }
+    if (args[0] === 'commit') { events.push('commit'); assert.ok(existsSync(f.installed('two'))); }
     return runCommand(command, args, options);
   };
   f.run(['--add', 'skill:two']);
@@ -342,7 +342,7 @@ for (const failed of ['fetch', 'var', 'commit', 'push']) {
     };
     assert.throws(() => f.run(['--add', 'skill:two']), new RegExp(`fixture ${failed} failure`));
     assert.equal(f.remoteManifest().skill.length, 1);
-    assert.equal(existsSync(f.shared('two')), ['commit', 'push'].includes(failed));
+    assert.equal(existsSync(f.installed('two')), ['commit', 'push'].includes(failed));
     const saved = readdirSync(f.tempDir);
     assert.equal(saved.length, ['commit', 'push'].includes(failed) ? 1 : 0);
     delete f.dependencies.runGit;

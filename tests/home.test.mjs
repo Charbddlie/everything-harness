@@ -16,7 +16,7 @@ function fixture(t) {
   const manifest = { agents: ['codex', 'github-copilot'], skill: [], 'agents-md': [{ name: 'one' }],
     'sync-rules': { auto: [{ type_name: 'agents-md:one' }] } };
   const dependencies = { env, homeDir: original, stateDir: join(original, 'state'), cwd: root,
-    sharedSkillsDir: join(original, 'skills'), fetchManifest: () => JSON.stringify(manifest), fetchFragment: () => 'Rule', log() {} };
+    fetchManifest: () => JSON.stringify(manifest), fetchFragment: () => 'Rule', log() {} };
   return { root, destination, original, env, manifest, dependencies };
 }
 
