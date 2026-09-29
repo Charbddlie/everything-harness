@@ -14,11 +14,12 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repository = join(root, 'repository'), home = join(root, 'profile');
   mkdirSync(repository);
-  const env = { ...process.env, GIT_CONFIG_COUNT: '3',
-    GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'false',
-    GIT_CONFIG_KEY_1: 'core.hooksPath', GIT_CONFIG_VALUE_1: join(root, 'no-hooks'),
-    GIT_CONFIG_KEY_2: `url.${pathToFileURL(repository).href}.insteadOf`, GIT_CONFIG_VALUE_2: 'https://github.com/fixture/skills.git' };
+  const config = join(root, '.gitconfig');
+  const env = { ...process.env, HOME: root, USERPROFILE: root, XDG_CONFIG_HOME: join(root, 'xdg'), GIT_CONFIG_NOSYSTEM: '1' };
   const git = (args) => runCommand('git', args, { cwd: repository, env });
+  git(['config', '--file', config, 'commit.gpgsign', 'false']);
+  git(['config', '--file', config, 'core.hooksPath', join(root, 'no-hooks')]);
+  git(['config', '--file', config, `url.${pathToFileURL(repository).href}.insteadOf`, 'https://github.com/fixture/skills.git']);
   git(['init', '--quiet']);
   git(['config', 'user.name', 'Skill Test']); git(['config', 'user.email', 'test@example.invalid']);
   const source = join(repository, 'skills', '.curated', 'one');

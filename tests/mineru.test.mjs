@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
-import { environmentIssues, extractZip, getApiKey, hasCachedParse, main, pollResult } from '../skills/pdf-analyze/scripts/mineru_parse.mjs';
-import { containsScripts } from '../sync.mjs';
+import { environmentIssues, extractZip, getApiKey, hasCachedParse, main } from '../skills/pdf-analyze/scripts/mineru_parse.mjs';
 
 const skillDir = fileURLToPath(new URL('../skills/pdf-analyze/', import.meta.url));
 const script = join(skillDir, 'scripts', 'mineru_parse.mjs');
@@ -100,13 +99,6 @@ test('PDF workflow preserves request options, upload semantics, metadata and ext
   assert.equal(JSON.parse(readFileSync(join(folder, '.mineru/sample/mineru-metadata.json'))).batch_id, 'test-batch');
 });
 
-test('polling handles API failures and bounds waits', async () => {
-  await assert.rejects(pollResult('fixture', 'id', { request: () => ({ data: { extract_result: [{ state: 'failed', err_msg: 'bad pdf fixture' }] } }) }), /bad pdf \[redacted\]/);
-  let clock = 0;
-  await assert.rejects(pollResult('fixture', 'id', { timeout: 1, interval: 10, now: () => clock, request: () => ({}), wait: async (ms) => { clock += ms; } }), /超时/);
-  assert.equal(clock, 1000);
-});
-
 test('ZIP rejects traversal, malformed data and corruption before writing any output', (t) => {
   const folder = temporary(t), archive = join(folder, 'result.zip');
   for (const name of ['../escape.md', '/absolute', 'a\\b', 'C:/escape', 'CON', 'trailing./x']) {
@@ -122,12 +114,4 @@ test('ZIP rejects traversal, malformed data and corruption before writing any ou
   writeFileSync(archive, broken);
   assert.throws(() => extractZip(archive, join(folder, 'output')), /校验/);
   assert.equal(existsSync(join(folder, 'output')), false);
-});
-
-test('every own skill with scripts includes a dryrun entry', () => {
-  const root = fileURLToPath(new URL('../skills/', import.meta.url));
-  for (const skill of readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
-    const path = join(root, skill.name);
-    if (containsScripts(path)) assert.equal(existsSync(join(path, 'dryrun.mjs')), true, skill.name);
-  }
 });

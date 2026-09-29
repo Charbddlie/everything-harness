@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import fs, { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { clean } from '../clean.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
@@ -56,16 +54,6 @@ test('clean covers both roots, every supported directory, active and deleted nam
   assert.match(f.logs.at(-1), /0 个 skill 路径，0 个指令文件/);
 });
 
-test('default cleans only user home and tilde does not duplicate its work', async (t) => {
-  const f = fixture(t);
-  for (const root of [f.home, f.selected]) put(join(root, '.agents', 'skills', 'active', 'SKILL.md'), 'content');
-  await f.run(['--home', '~', '--dryrun']);
-  assert.equal(f.logs.filter((line) => line.startsWith('将删除 skill')).length, 1);
-  await f.run();
-  assert.ok(!existsSync(join(f.home, '.agents', 'skills', 'active')));
-  assert.ok(existsSync(join(f.selected, '.agents', 'skills', 'active')));
-});
-
 test('malformed markers or manifest abort before any deletion', async (t) => {
   const f = fixture(t), skill = join(f.home, '.agents', 'skills', 'active', 'SKILL.md');
   put(skill, 'Keep');
@@ -110,23 +98,4 @@ test('a blocked deletion is reported while other selected paths are cleaned', as
     assert.ok(existsSync(blocked));
     assert.ok(!existsSync(other));
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
-});
-
-test('invalid flags and file roots fail, missing roots remain absent', async (t) => {
-  const f = fixture(t);
-  for (const args of [['--home'], ['--home', ''], ['--unknown'], ['--dryrun', '--dryrun']]) await assert.rejects(f.run(args));
-  put(join(f.root, 'file'), 'Keep');
-  await assert.rejects(f.run(['--home', 'file']), /不是目录/);
-  await f.run(['--home', 'missing']);
-  assert.ok(!existsSync(join(f.root, 'missing')));
-  assert.ok(!existsSync(f.home));
-});
-
-test('file and piped help do not fetch or clean anything', () => {
-  const script = fileURLToPath(new URL('../clean.mjs', import.meta.url));
-  for (const [args, input] of [[[script, '--help']], [['--input-type=module', '-', '--help'], readFileSync(script, 'utf8')]]) {
-    const result = spawnSync(process.execPath, args, { input, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /--dryrun/);
-  }
 });

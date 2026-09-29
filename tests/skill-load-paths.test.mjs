@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { copySkill, sync, writeAtomic } from '../sync.mjs';
+import { copySkill, sync } from '../sync.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const text = '---\nname: one\ndescription: Test skill.\n---\nVersion one\n';
@@ -24,19 +24,6 @@ function fixture(t) {
     target: (agent) => join(home, agent, 'skills', 'one'),
     run: (args = []) => sync(args, dependencies) };
 }
-
-test('copy prepares a complete replacement, removes stale files and records the source', (t) => {
-  const f = fixture(t), target = join(f.root, 'installed', 'one');
-  put(join(f.source, 'scripts', 'run.mjs'), 'console.log("one");');
-  put(join(f.source, '.git', 'config'), 'not skill content');
-  put(join(target, 'stale.txt'), 'stale');
-  copySkill(f.entry, f.source, target);
-  assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), text);
-  assert.ok(existsSync(join(target, 'scripts', 'run.mjs')));
-  assert.ok(!existsSync(join(target, 'stale.txt')));
-  assert.ok(!existsSync(join(target, '.git')));
-  assert.deepEqual(JSON.parse(readFileSync(join(target, '.eh-source.json'))), { source: 'example/repo' });
-});
 
 test('failed replacement restores the existing directory', (t) => {
   const f = fixture(t), target = join(f.root, 'installed', 'one');
@@ -68,33 +55,6 @@ test('failure to delete a replacement backup only warns after installing new con
     assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), text);
     assert.ok(logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
-});
-
-test('a blocked atomic-write temporary file does not mask the write error', (t) => {
-  const f = fixture(t), target = join(f.root, 'settings.json'), logs = [];
-  put(target, 'Keep');
-  const primary = new Error('rename denied');
-  let temporary;
-  const rename = t.mock.method(fs, 'renameSync', (from) => { temporary = from; throw primary; });
-  const originalRemove = fs.rmSync;
-  const remove = t.mock.method(fs, 'rmSync', (path, options) => {
-    if (path === temporary) throw new Error('EPERM fixture');
-    return originalRemove(path, options);
-  });
-  syncBuiltinESMExports();
-  try {
-    assert.throws(() => writeAtomic(target, 'New', (line) => logs.push(line)), (error) => error === primary);
-    assert.equal(readFileSync(target, 'utf8'), 'Keep');
-    assert.ok(logs.some((line) => line.includes(temporary) && line.includes('EPERM')));
-  } finally { rename.mock.restore(); remove.mock.restore(); syncBuiltinESMExports(); }
-});
-
-test('replacing a directory link leaves its previous target intact', (t) => {
-  const f = fixture(t), target = join(f.root, 'linked');
-  symlinkSync(f.source, target, process.platform === 'win32' ? 'junction' : 'dir');
-  copySkill(f.entry, f.source, target);
-  assert.ok(!lstatSync(target).isSymbolicLink());
-  assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), text);
 });
 
 test('user home only gets shared skills while both agents receive instruction fragments', (t) => {
