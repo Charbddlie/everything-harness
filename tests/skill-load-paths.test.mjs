@@ -86,12 +86,12 @@ test('default and explicit homes install into agent directories and remove legac
 test('installation selects agents and deletion covers every old and current location', (t) => {
   const f = fixture(t), home = join(f.root, 'custom');
   const target = (agent) => join(home, agent, 'skills', 'one');
-  f.run(['--home', home, '--local', '--del_agents', 'github-copilot']);
+  f.run(['--home', home, '--del', 'agent:copilot']);
   f.run(['--home', home]);
   assert.equal(readFileSync(join(target('.codex'), 'SKILL.md'), 'utf8'), text);
   assert.ok(!existsSync(target('.copilot')) && !existsSync(target('.agents')));
   for (const agent of ['.agents', '.copilot']) put(join(target(agent), 'SKILL.md'), text);
-  f.run(['--home', home, '--local', '--del', 'skill:one']);
+  f.run(['--home', home, '--del', 'skill:one']);
   assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(target(agent))));
   assert.ok(!existsSync(f.home));
 
@@ -109,7 +109,7 @@ test('installation selects agents and deletion covers every old and current loca
     put(join(directory, 'skills', 'unmanaged', 'SKILL.md'), 'Keep');
   }
   for (const path of instructions) put(path, 'Personal\n<!-- eh:base:start -->\nOld rule\n<!-- eh:base:end -->\n');
-  f.run(['--local', '--del', 'skill:one', 'agents-md:base']);
+  f.run(['--del', 'skill:one', 'agents-md:base']);
   for (const directory of directories) {
     assert.ok(!existsSync(join(directory, 'skills', 'one')));
     assert.equal(readFileSync(join(directory, 'skills', 'unmanaged', 'SKILL.md'), 'utf8'), 'Keep');

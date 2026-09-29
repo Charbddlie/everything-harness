@@ -53,7 +53,7 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   run();
   assert.match(readFileSync(join(home, '.codex', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version three/);
   assert.ok(!logs.some((line) => line.includes('Missing fixture setting')));
-  run(['--local', '--del', 'skill:one']);
+  run(['--del', 'skill:one']);
   assert.ok(['.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
   assert.ok(!readdirSync(root).some((name) => name.startsWith('eh-check-')));
 });

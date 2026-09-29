@@ -42,6 +42,7 @@ test('clean covers both roots, every supported directory, active and deleted nam
       }
     }
     put(join(root, '.everything-harness', 'harness.json'), '{"agents":[]}');
+    put(join(root, '.everything-harness', 'old', 'settings.json'), 'Old settings');
     put(join(root, '.agents', '.skill-lock.json'), 'Keep lock');
   }
   f.dependencies.fetchRepository = () => assert.fail('Clean must not download source');
@@ -51,13 +52,17 @@ test('clean covers both roots, every supported directory, active and deleted nam
   f.run(['--home', f.selected, '--dryrun']);
   for (const [path, original] of originals) assert.equal(readFileSync(path, 'utf8'), original);
   assert.ok(existsSync(join(f.home, '.agents', 'skills', 'active')));
+  for (const root of [f.home, f.selected]) {
+    assert.equal(readFileSync(join(root, '.everything-harness', 'harness.json'), 'utf8'), '{"agents":[]}');
+    assert.equal(readFileSync(join(root, '.everything-harness', 'old', 'settings.json'), 'utf8'), 'Old settings');
+  }
   f.run(['--home', f.selected]);
   for (const root of [f.home, f.selected]) {
     for (const directory of ['.agents', '.codex', '.copilot']) {
       for (const name of ['active', 'removed']) assert.ok(!existsSync(join(root, directory, 'skills', name)));
       assert.ok(existsSync(join(root, directory, 'skills', 'unmanaged', 'SKILL.md')));
     }
-    assert.equal(readFileSync(join(root, '.everything-harness', 'harness.json'), 'utf8'), '{"agents":[]}');
+    assert.ok(!existsSync(join(root, '.everything-harness')));
     assert.equal(readFileSync(join(root, '.agents', '.skill-lock.json'), 'utf8'), 'Keep lock');
   }
   for (const [path] of originals) assert.equal(readFileSync(path, 'utf8'), 'Before\r\n\nAfter\n');
@@ -104,17 +109,22 @@ test('skill links are removed without deleting their targets and instruction lin
 test('a blocked deletion is reported while other selected paths are cleaned', (t) => {
   const f = fixture(t), blocked = join(f.home, '.agents', 'skills', 'active', 'SKILL.md');
   put(blocked, 'Keep');
+  const config = join(f.home, '.everything-harness', 'harness.json');
+  put(config, 'Blocked settings');
   const other = join(f.home, '.codex', 'skills', 'removed');
   put(join(other, 'SKILL.md'), 'Remove');
   const remove = fs.rmSync;
   const mock = t.mock.method(fs, 'rmSync', (path, options) => {
-    if (path === blocked) throw new Error('EPERM fixture');
+    if (path === blocked || path === config) throw new Error('EPERM fixture');
     return remove(path, options);
   });
   syncBuiltinESMExports();
   try {
-    assert.throws(() => f.run(), (error) => error.message.includes(blocked) && error.message.includes('EPERM fixture'));
+    assert.throws(() => f.run(), (error) => error.message.includes(blocked) && error.message.includes(config) && error.message.includes('EPERM fixture'));
     assert.ok(existsSync(blocked));
+    assert.ok(existsSync(config));
     assert.ok(!existsSync(other));
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+  f.run();
+  assert.ok(!existsSync(dirname(config)));
 });

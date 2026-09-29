@@ -2,6 +2,10 @@
 
 以下示例通过 `--home` 将当前工作目录作为内容根目录；省略该参数时使用用户主目录。
 
+`harnesses.json` 按名称定义各 harness 的 `skill-dir` 和 `agents-md`，路径相对 home。`sync.mjs` 统一按名称解析定义。本地脚本读取旁边的 JSON，远程管道入口读取远程 main 的 JSON。
+
+同步选择通过 `--add`、`--del` 管理，例如 `--add agent:copilot`、`--add rule:learn`、`--del skill:paper-read`。这些操作只调整本机同步和安装；内容及来源在仓库的 `harness.json` 中维护。详细参数见 [harness-manage](skills/harness-manage/SKILL.md)。
+
 Skill 安装到生效 agent 的 `.codex/skills`、`.copilot/skills`，所有 home 使用相同布局。省略 `--home` 时尊重 `CODEX_HOME`、`COPILOT_HOME`。对应 skill 安装成功后清理旧 `.agents/skills` 副本；清理操作覆盖三个目录及环境变量指定位置，保留清单外内容。
 
 同步直接从 GitHub 获取 skill，在用户主目录 `~/temp` 准备源码，再覆盖目标目录。dryrun 环境检查仅适用于自有来源，第三方 skill 完成源码结构校验后直接应用。普通同步中环境检查失败只警告，仍应用内容；追加 `--dryrun` 则只检查，失败返回非零。临时内容删除失败会报告具体路径并继续；下载、结构校验及正式内容的写入或删除错误仍会中止对应操作。
@@ -10,7 +14,7 @@ Skill 安装到生效 agent 的 `.codex/skills`、`.copilot/skills`，所有 hom
 
 命令行以一级编号显示公共阶段和 `自动配置: <rule_name>`，每项配置内的检查和应用使用 `n1.n2` 子编号，从 1 开始。实际清理的过期项显示 `[过期]`，规则清理显示 `[删除]`，安装和片段应用显示 `[新增]` 或 `[更新]`；`[未命中]` 列出具体条件。
 
-同步以“完成”步骤收尾，按需显示“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态检查当前 home 对应的 Codex 和 Copilot skill 目录。未命中、失败或成员为空的规则视为未应用；`--dryrun` 不应用规则。本机空数组会覆盖远程规则，界面会提示成员为空；可用 `--local --add rule:auto` 恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
+同步以“完成”步骤收尾，按需显示“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态按 harness 定义检查。未命中、失败或成员为空的规则视为未应用；`--dryrun` 不应用规则。本机空数组会覆盖远程规则，界面会提示成员为空；可用 `--add rule:auto` 恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
 
 ## Windows PowerShell
 
@@ -60,6 +64,6 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 - 删除各根目录下 `.agents/skills`、`.codex/skills`、`.copilot/skills` 中，远程清单活动项及 `deleted` 项的同名 skill，忽略来源标记和本机开关。
 - 检查各根目录本身及 `.agents`、`.codex`、`.copilot` 中的 `AGENTS.md`、`CLAUDE.md`、`copilot-instructions.md`，仅删除所有 eh 标记块，保留文件和其他正文。
-- 保留其他 skills、本机设置、锁文件和远程清单；再次运行普通同步会重新安装生效规则中的内容。
+- 删除各清理根目录中的整个 `.everything-harness`，包括本机设置和旧配置文件；保留其他 skills、外部锁文件和远程清单。再次同步从远程默认设置初始化。
 
 `--dryrun` 只预览，不删除或写入。失败显示具体路径，已完成的清理不回滚。完整管理说明见 [harness-manage](skills/harness-manage/SKILL.md)。

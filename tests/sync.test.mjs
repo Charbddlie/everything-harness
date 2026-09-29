@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { OWN_SOURCE, findSkill, runCommand, runDryruns, sync } from '../sync.mjs';
+import { OWN_SOURCE, findSkill, sync } from '../sync.mjs';
 
 const agents = ['codex', 'github-copilot'];
 const entry = (name, source = 'example/skills') => ({ name, source });
@@ -116,7 +116,7 @@ test('source conflict blocks downloads, replacement and deletion', (t) => {
   put(join(f.installed('one'), 'SKILL.md'), 'Keep');
   put(join(f.installed('one'), '.eh-source.json'), '{"source":"other/repo"}');
   assert.throws(() => f.run(), /来源冲突/);
-  assert.throws(() => f.run(['--local', '--del', 'skill:one']), /来源冲突/);
+  assert.throws(() => f.run(['--del', 'skill:one']), /来源冲突/);
   assert.equal(f.downloads.length, 0);
   assert.equal(readFileSync(join(f.installed('one'), 'SKILL.md'), 'utf8'), 'Keep');
   assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
@@ -145,7 +145,7 @@ test('failed skill checks preserve content in dryrun but only warn during sync a
   assert.ok(f.logs.some((line) => line.startsWith('[警告] 2 个 skill')));
   assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
   put(f.settings, '{"sync-rules":{"auto":[]}}');
-  f.run(['--local', '--add', 'skill:one']);
+  f.run(['--add', 'skill:one']);
   assert.ok(JSON.parse(readFileSync(f.settings))['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:one'));
 });
 
@@ -171,8 +171,8 @@ test('sync, dryrun and local add execute only own-source checks', (t) => {
   f.run(['--dryrun']);
   assert.ok(!existsSync(f.home));
   f.run();
-  f.run(['--local', '--add', 'example/skills', 'skill:two']);
-  assert.equal(readFileSync(ownMarker, 'utf8'), 'ran\nran\n');
+  f.run(['--add', 'skill:two']);
+  assert.equal(readFileSync(ownMarker, 'utf8'), 'ran\nran\nran\n');
   assert.ok(!existsSync(thirdPartyMarker));
   assert.ok(existsSync(join(f.installed('two'), 'dryrun.mjs')));
   assert.match(readFileSync(join(f.installed('two'), 'SKILL.md'), 'utf8'), /Version one/);
@@ -230,13 +230,15 @@ test('piped output shows the heading first and each source after its download', 
   assert.deepEqual(readdirSync(f.tempDir), []);
 });
 
-test('empty agent selection skips checks and prevents explicit content mutations', (t) => {
+test('empty agent selection stores synchronization choices without installation until an agent is enabled', (t) => {
   const f = fixture(t);
-  f.run(['--local', '--del_agents', ...agents]);
+  f.run(['--del', ...agents.map((name) => `agent:${name}`)]);
   f.run(); f.run(['--dryrun']);
   assert.equal(f.downloads.length, 0);
-  for (const mode of ['--add', '--del']) assert.throws(() => f.run(['--local', mode, ...(mode === '--add' ? ['example/skills'] : []), 'skill:one']), /agents 为空/);
-  f.run(['--local', '--add_agents', 'codex']);
+  f.run(['--del', 'skill:one']);
+  f.run(['--add', 'skill:one']);
+  assert.equal(f.downloads.length, 0);
+  f.run(['--add', 'agent:codex']);
   f.run(); assert.ok(existsSync(f.installed('one')));
 });
 
@@ -249,113 +251,4 @@ test('skill source links cannot copy external files', (t) => {
   put(join(outside, 'one', 'SKILL.md'), text('one'));
   symlinkSync(outside, join(root, 'skills'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => findSkill(root, entry('one', OWN_SOURCE)), /仓库之外/);
-});
-
-function remoteFixture(t, manifest = { agents, skill: [entry('one', OWN_SOURCE)] }) {
-  const f = fixture(t, manifest), repository = join(f.root, 'repository'), remote = join(f.root, 'remote.git');
-  mkdirSync(repository);
-  const env = { ...process.env, HOME: f.root, USERPROFILE: f.root, XDG_CONFIG_HOME: join(f.root, 'xdg'),
-    GIT_CONFIG_NOSYSTEM: '1', CODEX_HOME: join(f.home, '.codex'), COPILOT_HOME: join(f.home, '.copilot'),
-    GIT_AUTHOR_NAME: 'Skill Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
-    GIT_COMMITTER_NAME: 'Skill Test', GIT_COMMITTER_EMAIL: 'test@example.invalid' };
-  const git = (args) => runCommand('git', args, { cwd: repository, env });
-  git(['config', '--file', join(f.root, '.gitconfig'), 'commit.gpgsign', 'false']);
-  git(['config', '--file', join(f.root, '.gitconfig'), 'core.hooksPath', join(f.root, 'no-hooks')]);
-  git(['init', '--bare', '--quiet', remote]); git(['init', '--quiet']);
-  git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
-  put(join(repository, 'harness.json'), JSON.stringify(manifest) + '\n');
-  put(join(repository, 'skills', 'one', 'SKILL.md'), text('one'));
-  put(join(repository, 'skills', 'two', 'SKILL.md'), text('two'));
-  put(join(repository, 'agents-md', 'base.md'), 'Instructions');
-  git(['add', '.']); git(['commit', '--quiet', '-m', 'Initial']);
-  git(['remote', 'add', 'origin', remote]); git(['push', '--quiet', '-u', 'origin', 'main']);
-  Object.assign(f.dependencies, { env, repositoryUrl: remote });
-  return { ...f, repository, git, remote,
-    remoteManifest: () => JSON.parse(runCommand('git', ['--git-dir', remote, 'show', 'main:harness.json'])) };
-}
-
-test('remote own-skill and fragment additions reuse the publication checkout', (t) => {
-  const f = remoteFixture(t);
-  delete f.dependencies.fetchFragment;
-  f.dependencies.fetchRepository = () => assert.fail('The publication checkout already contains the source');
-  put(join(f.repository, 'agents-md', 'base.md'), 'Unpublished local edit');
-  f.run(['--add', 'skill:two']);
-  assert.match(readFileSync(join(f.installed('two'), 'SKILL.md'), 'utf8'), /Version one/);
-  f.run(['--add', 'agents-md:base']);
-  assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
-  assert.equal(readFileSync(join(f.repository, 'agents-md', 'base.md'), 'utf8'), 'Unpublished local edit');
-  assert.ok(f.remoteManifest().skill.some(({ name }) => name === 'two'));
-  assert.deepEqual(f.remoteManifest()['agents-md'], [{ name: 'base' }]);
-  assert.deepEqual(readdirSync(f.tempDir), []);
-});
-
-test('remote add applies failed-check content before publishing without changing a dirty user checkout', (t) => {
-  const f = remoteFixture(t), events = [];
-  put(join(f.repository, 'skills', 'two', 'dryrun.mjs'), 'console.error("missing test setting"); process.exitCode=1;');
-  f.git(['add', 'skills/two/dryrun.mjs']); f.git(['commit', '--quiet', '-m', 'Add failing own check']);
-  f.git(['push', '--quiet']);
-  put(join(f.repository, 'unrelated.txt'), 'Keep'); f.git(['add', 'unrelated.txt']);
-  f.dependencies.runDryruns = (...args) => {
-    events.push('dryrun'); assert.equal(f.remoteManifest().skill.length, 1);
-    return runDryruns(...args);
-  };
-  f.dependencies.runGit = (command, args, options) => {
-    if (args[0] === 'commit') { events.push('commit'); assert.ok(existsSync(f.installed('two'))); }
-    return runCommand(command, args, options);
-  };
-  f.run(['--add', 'skill:two']);
-  assert.deepEqual(events, ['dryrun', 'commit']);
-  assert.ok(f.logs.some((line) => line.startsWith('[警告]')));
-  assert.equal(f.remoteManifest().skill.length, 2);
-  assert.equal(f.git(['diff', '--cached', '--name-only']).trim(), 'unrelated.txt');
-  assert.equal(JSON.parse(readFileSync(join(f.repository, 'harness.json'))).skill.length, 1);
-  assert.deepEqual(readdirSync(f.tempDir), []);
-});
-
-for (const target of ['skill:one', 'agents-md:base']) {
-  test(`remote deletion publishes only the tombstone and selected source for ${target}`, (t) => {
-    const f = remoteFixture(t, { agents, skill: [entry('one', OWN_SOURCE)], 'agents-md': [{ name: 'base' }] });
-    f.run(['--del', target]);
-    assert.ok(f.remoteManifest().deleted.some(({ type_name }) => type_name === target));
-    const files = runCommand('git', ['--git-dir', f.remote, 'ls-tree', '-r', '--name-only', 'main']);
-    const path = target.startsWith('skill:') ? 'skills/one/SKILL.md' : 'agents-md/base.md';
-    assert.ok(!files.includes(path));
-    assert.ok(existsSync(join(f.repository, path)));
-    const before = f.git(['ls-remote', 'origin', 'refs/heads/main']);
-    f.run(['--del', target]);
-    assert.equal(f.git(['ls-remote', 'origin', 'refs/heads/main']), before);
-  });
-}
-
-test('third-party deletion preserves same-named repository source', (t) => {
-  const f = remoteFixture(t, { agents, skill: [entry('one')] });
-  f.run(['--del', 'skill:one']);
-  assert.ok(runCommand('git', ['--git-dir', f.remote, 'show', 'main:skills/one/SKILL.md']).includes('one'));
-});
-
-for (const failed of ['fetch', 'var', 'commit', 'push']) {
-  test(`remote ${failed} failure preserves completed operations and allows retry`, (t) => {
-    const f = remoteFixture(t);
-    f.dependencies.runGit = (command, args, options) => {
-      if (args[0] === failed) throw new Error(`fixture ${failed} failure`);
-      return runCommand(command, args, options);
-    };
-    assert.throws(() => f.run(['--add', 'skill:two']), new RegExp(`fixture ${failed} failure`));
-    assert.equal(f.remoteManifest().skill.length, 1);
-    assert.equal(existsSync(f.installed('two')), ['commit', 'push'].includes(failed));
-    const saved = readdirSync(f.tempDir);
-    assert.equal(saved.length, ['commit', 'push'].includes(failed) ? 1 : 0);
-    delete f.dependencies.runGit;
-    f.run(['--add', 'skill:two']);
-    assert.equal(f.remoteManifest().skill.length, 2);
-  });
-}
-
-test('remote agents and switches publish without downloading or installing skills', (t) => {
-  const f = remoteFixture(t);
-  f.run(['--del_agents', 'codex']);
-  assert.deepEqual(f.remoteManifest().agents, ['github-copilot']);
-  f.run(['--auto_sync', 'true', 'skill:one']);
-  assert.deepEqual(f.remoteManifest()['sync-rules'].auto, [member('one')]);
-  assert.equal(f.downloads.length, 0);
 });

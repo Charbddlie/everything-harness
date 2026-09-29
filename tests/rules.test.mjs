@@ -54,24 +54,66 @@ function fixture(t, manifest = {
     run: (args = []) => sync(args, dependencies) };
 }
 
-test('rule deletion bypasses callbacks and tests and local add restores the complete group', (t) => {
+test('rule enablement persists across syncs and deletion removes only its unshared members', (t) => {
   const f = fixture(t);
-  f.run(['--local', '--add', 'rule:learn']);
-  assert.equal(f.installed.size, 0);
-  assert.ok(!existsSync(f.settings));
+  f.run(['--add', 'rule:learn']);
+  assert.deepEqual([...f.installed.keys()], ['core']);
+  assert.deepEqual(f.read()['sync-rules'].learn, f.manifest['sync-rules'].learn);
   f.dependencies.platform = 'win32';
-  f.run(['--local', '--add', 'rule:learn']);
+  f.run();
+  assert.ok(f.installed.has('paper') && f.installed.has('zotero'));
   f.dependencies.platform = 'linux'; f.events.length = 0;
   f.dependencies.runDryruns = () => assert.fail('Deletion must not test skills');
-  f.run(['--local', '--del', 'rule:learn']);
-  assert.equal(f.installed.size, 0);
+  f.run(['--del', 'rule:learn']);
+  assert.deepEqual([...f.installed.keys()], ['core']);
   assert.deepEqual(f.read()['sync-rules'].learn, []);
   assert.ok(!f.events.some((event) => event.startsWith('自动配置: ')));
   assert.ok(!f.events.some((event) => event.startsWith('检测 ')));
   f.dependencies.platform = 'win32'; f.dependencies.runDryruns = () => {};
-  f.run(['--local', '--add', 'rule:learn']);
-  assert.equal(f.installed.size, 2);
+  f.run(['--add', 'rule:learn']);
+  assert.equal(f.installed.size, 3);
   assert.equal(f.manifest['sync-rules'].learn.length, 2);
+});
+
+test('typed add and del manage only local synchronization for content, rules and agents', (t) => {
+  const f = fixture(t);
+  f.manifest['sync-rules'].auto = [];
+  f.manifest['sync-rules'].win = [member('skill:core'), member('agents-md:base')];
+  f.manifest.skill.push(skill('external', 'third-party/repo'));
+  f.manifest.agents = ['codex'];
+  const manifestBefore = JSON.stringify(f.manifest), path = join(f.root, 'project-source', 'SKILL.md');
+  put(path, 'Repository source');
+  f.run(['--add', 'agent:copilot', 'skill:external', 'skill:core', 'agents-md:base']);
+  assert.deepEqual(f.read().agents, ['codex', 'copilot']);
+  assert.ok(f.installed.has('external'));
+  assert.ok(existsSync(join(f.root, '.copilot', 'skills', 'external', 'SKILL.md')));
+  assert.ok(!f.installed.has('core'));
+  f.dependencies.platform = 'win32';
+  f.run();
+  assert.ok(f.installed.has('core'));
+  f.run(['--add', 'rule:auto']);
+  f.run(['--del', 'rule:auto']);
+  assert.ok(f.installed.has('core'));
+  const downloads = f.events.filter((event) => event === '下载源码').length;
+  f.run(['--del', 'agent:copilot']);
+  assert.deepEqual(f.read().agents, ['codex']);
+  assert.ok(f.installed.has('core'));
+  assert.ok(!existsSync(join(f.root, '.copilot', 'skills', 'core')));
+  assert.ok(!readFileSync(join(f.root, '.copilot', 'copilot-instructions.md'), 'utf8').includes('eh:base:'));
+  f.run(['--del', 'skill:core', 'agents-md:base', 'skill:external']);
+  assert.ok(!f.installed.has('core') && !f.installed.has('external'));
+  assert.ok(!readFileSync(f.target, 'utf8').includes('eh:base:'));
+  assert.equal(f.events.filter((event) => event === '下载源码').length, downloads);
+  f.run();
+  assert.ok(!f.installed.has('core') && !f.installed.has('external'));
+  const settings = readFileSync(f.settings, 'utf8');
+  for (const args of [['--add', 'skill:missing'], ['--add', 'owner/repo', 'skill:new'],
+    ['--local', '--add', 'skill:core'], ['--add_agents', 'codex'], ['--del_agents', 'codex'], ['--auto_sync', 'true', 'skill:core']]) {
+    assert.throws(() => f.run(args));
+    assert.equal(readFileSync(f.settings, 'utf8'), settings);
+  }
+  assert.equal(JSON.stringify(f.manifest), manifestBefore);
+  assert.equal(readFileSync(path, 'utf8'), 'Repository source');
 });
 
 test('sync saves configuration first, reports real changes and reconciles both content types after rules', (t) => {
@@ -109,7 +151,7 @@ test('sync saves configuration first, reports real changes and reconciles both c
   assert.ok(has('新增', ' / fresh →') && has('新增', 'agents-md:fresh'));
   assert.ok(has('删除', 'windows') && has('删除', 'agents-md:windows'));
   assert.ok(has('未命中', '需要 Windows，当前为 linux'));
-  assert.ok(has('未命中', '需要显式调用 --add rule:learn'));
+  assert.ok(has('未命中', '需要通过 --add rule:learn 显式启用'));
   assert.ok(records.findIndex(({ status }) => status === '删除') > records.findLastIndex(({ status }) => ['新增', '更新'].includes(status)));
   assert.ok(!records.some(({ message }) => /absent|待删除|无需删除|检测条件未满足/.test(message)));
   for (const name of ['core', 'shared', 'fresh', 'standalone', 'unmanaged']) assert.ok(f.installed.has(name));
@@ -265,34 +307,6 @@ test('preflight uses user temp independently of content home and cleans up after
   }
 });
 
-test('remote checkout cleanup reports the blocked file without masking the Git error', (t) => {
-  const f = fixture(t);
-  let blocked;
-  f.dependencies.tempDir = f.root;
-  f.dependencies.runGit = (command, args, { cwd }) => {
-    blocked = join(cwd, '.git', 'index.lock');
-    put(blocked, 'fixture');
-    throw new Error('original Git failure');
-  };
-  const originalRemove = fs.rmSync;
-  const mock = t.mock.method(fs, 'rmSync', (path, options) => {
-    if (path === blocked) throw Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
-    return originalRemove(path, options);
-  });
-  syncBuiltinESMExports();
-  try {
-    assert.throws(() => f.run(['--add_agents', 'codex']), (error) => {
-      assert.ok(error.message.includes('original Git failure'));
-      assert.ok(error.message.includes('重新运行同一条命令'));
-      assert.ok(!error.message.includes('EPERM'));
-      return true;
-    });
-    assert.ok(f.logs.some((line) => line.includes(`删除失败：${blocked}；`)));
-  } finally {
-    mock.mock.restore();
-    syncBuiltinESMExports();
-  }
-});
 
 test('temporary cleanup failure does not block fragments, later rules or local settings', (t) => {
   const f = fixture(t);
@@ -317,20 +331,4 @@ test('temporary cleanup failure does not block fragments, later rules or local s
     assert.ok(f.logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
     assert.equal(f.logs.at(-3), '规则同步和环境检查完成。');
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
-});
-
-test('source conflicts, test failures and concurrent settings edits preserve local configuration', (t) => {
-  const f = fixture(t);
-  f.run(['--local', '--add', 'skill:core']);
-  put(join(f.installed.get('core').path, '.eh-source.json'), '{"source":"other/repo"}');
-  const original = readFileSync(f.settings, 'utf8');
-  f.events.length = 0;
-  assert.throws(() => f.run(['--local', '--del', 'rule:auto']), /来源冲突/);
-  assert.equal(readFileSync(f.settings, 'utf8'), original);
-  assert.ok(!f.events.some((event) => event.startsWith('test:') || event.startsWith('del:')));
-  put(join(f.installed.get('core').path, '.eh-source.json'), JSON.stringify({ source: OWN_SOURCE }));
-  const concurrent = '{"agents":["codex"],"sync-rules":{}}';
-  f.dependencies.runDryruns = () => put(f.settings, concurrent);
-  assert.throws(() => f.run(['--local', '--add', 'skill:core']), /操作期间本机设置已被修改/);
-  assert.equal(readFileSync(f.settings, 'utf8'), concurrent);
 });
