@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { copySkill, sync } from '../sync.mjs';
+import { copySkill, sync, writeAtomic } from '../sync.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const text = '---\nname: one\ndescription: Test skill.\n---\nVersion one\n';
@@ -51,6 +51,42 @@ test('failed replacement restores the existing directory', (t) => {
     assert.throws(() => copySkill(f.entry, f.source, target), /rename denied/);
     assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), 'Keep');
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test('failure to delete a replacement backup only warns after installing new content', (t) => {
+  const f = fixture(t), target = join(f.root, 'installed', 'one'), logs = [];
+  put(join(target, 'SKILL.md'), 'Old content');
+  const originalRemove = fs.rmSync;
+  let blocked;
+  const mock = t.mock.method(fs, 'rmSync', (path, options) => {
+    if (path.endsWith('.bak')) { blocked = path; throw new Error('EPERM fixture'); }
+    return originalRemove(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => copySkill(f.entry, f.source, target, (line) => logs.push(line)));
+    assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), text);
+    assert.ok(logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
+  } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test('a blocked atomic-write temporary file does not mask the write error', (t) => {
+  const f = fixture(t), target = join(f.root, 'settings.json'), logs = [];
+  put(target, 'Keep');
+  const primary = new Error('rename denied');
+  let temporary;
+  const rename = t.mock.method(fs, 'renameSync', (from) => { temporary = from; throw primary; });
+  const originalRemove = fs.rmSync;
+  const remove = t.mock.method(fs, 'rmSync', (path, options) => {
+    if (path === temporary) throw new Error('EPERM fixture');
+    return originalRemove(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => writeAtomic(target, 'New', (line) => logs.push(line)), (error) => error === primary);
+    assert.equal(readFileSync(target, 'utf8'), 'Keep');
+    assert.ok(logs.some((line) => line.includes(temporary) && line.includes('EPERM')));
+  } finally { rename.mock.restore(); remove.mock.restore(); syncBuiltinESMExports(); }
 });
 
 test('replacing a directory link leaves its previous target intact', (t) => {

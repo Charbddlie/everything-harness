@@ -71,7 +71,7 @@ export async function clean(args, dependencies = {}) {
   for (const [path, content] of writes) {
     log(`${dryrun ? '将移除' : '移除'} eh 标记块：${path}`);
     if (!dryrun) {
-      try { writeAtomic(path, content); }
+      try { writeAtomic(path, content, log); }
       catch (error) { const message = `${path} 写入失败：${error.message}`; failures.push(message); log(message); }
     }
   }

@@ -369,7 +369,7 @@ function applyFragments(writes, dryrun, log) {
   if (writes.length) log(dryrun ? '检查指令片段' : '应用指令片段', { stage: true });
   for (const { path, original, content, names, deleted } of writes) {
     if (deleted.length) log(`片段已标记删除：${deleted.join(', ')}；${dryrun ? '同步时将清理' : '正在清理'} ${path}`);
-    if (!dryrun && content !== original) writeAtomic(path, content);
+    if (!dryrun && content !== original) writeAtomic(path, content, log);
     if (names.length) log(`片段${dryrun ? '检查通过' : '覆盖同步'}：${names.join(', ')} → ${path}`, { status: '通过' });
   }
 }
@@ -393,14 +393,14 @@ function effectiveRules(manifest, local) {
     .map(([rule, members]) => [rule, members.filter(({ type_name }) => active.has(type_name))]));
 }
 
-export function writeAtomic(path, text) {
+export function writeAtomic(path, text, log = createProgressLogger()) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try { writeFileSync(temporary, text, { flag: 'wx' }); renameSync(temporary, path); }
-  finally { rmSync(temporary, { force: true }); }
+  finally { cleanupTemporary(temporary, log); }
 }
 
-function initializeLocalSettings(local) {
+function initializeLocalSettings(local, log) {
   if (local.text === null) {
     mkdirSync(dirname(local.path), { recursive: true });
     try { writeFileSync(local.path, JSON.stringify(local.settings, null, 2) + '\n', { flag: 'wx' }); }
@@ -410,7 +410,7 @@ function initializeLocalSettings(local) {
     }
   } else if (local.migrated) {
     check(readFileSync(local.path, 'utf8') === local.text, '操作期间本机设置已被修改，请重新同步。');
-    writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n');
+    writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n', log);
   }
 }
 
@@ -540,10 +540,9 @@ export function containsScripts(path) {
   });
 }
 
-export function copySkill(entry, source, target) {
+export function copySkill(entry, source, target, log = createProgressLogger()) {
   mkdirSync(dirname(target), { recursive: true });
   const temporary = `${target}.${randomUUID()}.tmp`, backup = `${target}.${randomUUID()}.bak`;
-  let operationError;
   try {
     cpSync(source, temporary, { recursive: true, filter: (path) => basename(path) !== '.git' });
     writeFileSync(join(temporary, SOURCE_FILE), JSON.stringify({ source: entry.source }) + '\n');
@@ -553,11 +552,8 @@ export function copySkill(entry, source, target) {
       if (entryExists(backup)) renameSync(backup, target);
       throw error;
     }
-    removeDirectory(backup);
-  } catch (error) {
-    operationError = error;
-    throw error;
-  } finally { removeDirectory(temporary, operationError); }
+    cleanupTemporary(backup, log);
+  } finally { cleanupTemporary(temporary, log); }
 }
 
 function install(entries, prepared, context) {
@@ -570,7 +566,7 @@ function install(entries, prepared, context) {
       mkdirSync(directory, { recursive: true });
       const target = join(realpathSync(directory), entry.name);
       if (written.has(target)) continue;
-      copySkill(entry, prepared.get(entry.name).path, target);
+      copySkill(entry, prepared.get(entry.name).path, target, context.log);
       written.add(target);
       context.log(`覆盖安装：${entry.source} / ${entry.name} → ${target}`, { status: '通过' });
     }
@@ -648,7 +644,7 @@ function manageLocal(options, dependencies, log) {
   }
   validateManifest(local.settings, { local: true });
   log('保存本机设置', { stage: true });
-  writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n');
+  writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n', log);
   log(`本机设置已保存：${local.path}（${options.names.join(', ')}）`, { status: '完成' });
 }
 
@@ -688,7 +684,7 @@ function createTemporaryDirectory(prefix, dependencies) {
   return mkdtempSync(join(parent, prefix));
 }
 
-export function removeDirectory(root, operationError) {
+export function removeDirectory(root) {
   let failedPath = root;
   const remove = (path) => {
     failedPath = path;
@@ -704,15 +700,21 @@ export function removeDirectory(root, operationError) {
   try { remove(root); }
   catch (error) {
     const message = `删除失败：${failedPath}；${error.message}`;
-    if (operationError) throw new AggregateError([operationError, error], `${operationError.message}\n${message}`);
     throw new Error(message, { cause: error });
+  }
+}
+
+function cleanupTemporary(path, log) {
+  try { removeDirectory(path); return true; }
+  catch (error) {
+    log(`[警告] 临时内容清理失败，继续执行：${error.message}\n残留位置：${path}`);
+    return false;
   }
 }
 
 export function checkSkills(entries, agents, dependencies, log, apply) {
   if (!entries.length) return;
   const root = createTemporaryDirectory('eh-check-', dependencies);
-  let operationError;
   try {
     log('下载 skill 源码', { stage: true });
     log(`临时目录：${root}`);
@@ -730,13 +732,9 @@ export function checkSkills(entries, agents, dependencies, log, apply) {
     log('检查 skill 环境', { stage: true });
     (dependencies.runDryruns ?? runDryruns)(entries, prepared, { log, env: dependencies.env, strict: !apply });
     apply?.(prepared);
-  } catch (error) {
-    operationError = error;
-    throw error;
   } finally {
     log('清理临时目录', { stage: true });
-    removeDirectory(root, operationError);
-    log(`已清理：${root}`, { status: '通过' });
+    if (cleanupTemporary(root, log)) log(`已清理：${root}`, { status: '通过' });
   }
 }
 
@@ -778,7 +776,6 @@ function manageManifest(options, dependencies, log) {
     GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' };
   const git = (args) => (dependencies.runGit ?? runCommand)('git', args, { cwd: root, env, timeout: 120_000 });
   let keep = false;
-  let operationError;
   try {
     log('准备远程清单', { stage: true });
     log(`Git 临时副本：${root}`);
@@ -806,13 +803,11 @@ function manageManifest(options, dependencies, log) {
     applyManifestChange(options, dependencies, log, root, git, before, sources, () => { keep = true; });
     keep = false;
   } catch (error) {
-    operationError = new Error(`${error.message}${keep ? `\n操作副本已保留：${root}` : ''}\n修复问题后重新运行同一条命令，脚本会自动重新读取清单并处理 Git。`, { cause: error });
-    throw operationError;
+    throw new Error(`${error.message}${keep ? `\n操作副本已保留：${root}` : ''}\n修复问题后重新运行同一条命令，脚本会自动重新读取清单并处理 Git。`, { cause: error });
   } finally {
     if (!keep) {
       log('清理 Git 临时副本', { stage: true });
-      removeDirectory(root, operationError);
-      log(`已清理：${root}`, { status: '通过' });
+      if (cleanupTemporary(root, log)) log(`已清理：${root}`, { status: '通过' });
     }
   }
 }
@@ -874,7 +869,7 @@ export function sync(args, dependencies = {}) {
   if (options.mode === 'list') { listCatalog(manifest, local, log); return; }
   const agents = effectiveAgents(manifest, local);
   if (!agents.length) {
-    if (options.mode === 'sync') initializeLocalSettings(local);
+    if (options.mode === 'sync') initializeLocalSettings(local, log);
     log('生效 agents 为空，无需安装或检查。', { status: '跳过' }); return;
   }
   const dryrun = options.mode === 'dryrun';
@@ -890,7 +885,7 @@ export function sync(args, dependencies = {}) {
   check(!failures.length, `规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
   if (!dryrun) {
     log('确认本机设置', { stage: true });
-    initializeLocalSettings(local);
+    initializeLocalSettings(local, log);
   }
   log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。', { status: '完成' });
 }

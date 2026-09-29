@@ -383,6 +383,7 @@ test('preflight uses user temp independently of content home and cleans up after
 for (const blockedType of ['file', 'directory']) for (const failCheck of [false, true]) {
   test(`preflight reports the exact blocked ${blockedType} and preserves check failure=${failCheck}`, (t) => {
     const f = fixture(t);
+    const logs = [];
     let blocked, root;
     const primary = new Error('original dryrun failure');
     const cleanup = Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
@@ -409,15 +410,11 @@ for (const blockedType of ['file', 'directory']) for (const failCheck of [false,
     });
     syncBuiltinESMExports();
     try {
-      assert.throws(() => checkSkills([skill('core')], ['codex'], dependencies, () => {}), (error) => {
-        assert.ok(error.message.includes(`删除失败：${blocked}；`));
-        assert.ok(error.message.includes('EPERM'));
-        if (failCheck) {
-          assert.ok(error.message.includes(primary.message));
-          assert.deepEqual(error.errors, [primary, cleanup]);
-        } else assert.equal(error.cause, cleanup);
-        return true;
-      });
+      const run = () => checkSkills([skill('core')], ['codex'], dependencies, (line) => logs.push(line));
+      if (failCheck) assert.throws(run, (error) => error === primary);
+      else assert.doesNotThrow(run);
+      assert.ok(logs.some((line) => line.startsWith('[警告]') && line.includes(`删除失败：${blocked}；`) && line.includes('EPERM')));
+      assert.ok(!logs.some((line) => line === `已清理：${root}`));
       assert.ok(existsSync(blocked));
     } finally {
       mock.mock.restore();
@@ -463,13 +460,66 @@ test('remote checkout cleanup reports the blocked file without masking the Git e
     assert.throws(() => f.run(['--add_agents', 'codex']), (error) => {
       assert.ok(error.message.includes('original Git failure'));
       assert.ok(error.message.includes('重新运行同一条命令'));
-      assert.ok(error.message.includes(`删除失败：${blocked}；`));
+      assert.ok(!error.message.includes('EPERM'));
       return true;
     });
+    assert.ok(f.logs.some((line) => line.includes(`删除失败：${blocked}；`)));
   } finally {
     mock.mock.restore();
     syncBuiltinESMExports();
   }
+});
+
+test('temporary cleanup failure does not block fragments, later rules or local settings', (t) => {
+  const f = fixture(t);
+  f.dependencies.platform = 'win32';
+  const originalRemove = fs.rmSync;
+  let blocked;
+  const mock = t.mock.method(fs, 'rmSync', (path, options) => {
+    if (path.includes('eh-check-') && path.endsWith('SKILL.md')) {
+      blocked = path;
+      throw new Error('EPERM fixture');
+    }
+    return originalRemove(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => f.run());
+    assert.ok(f.installed.has('core'));
+    assert.ok(readFileSync(f.target, 'utf8').includes('eh:base:start'));
+    assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:start'));
+    assert.ok(f.events.includes('规则回调：rule:learn'));
+    assert.ok(existsSync(f.settings));
+    assert.ok(f.logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
+    assert.equal(f.logs.at(-1), '规则同步和环境检查完成。');
+  } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test('successful remote publication stays successful when its temporary checkout cannot be removed', (t) => {
+  const f = fixture(t), commands = [];
+  let blocked;
+  f.dependencies.tempDir = f.root;
+  f.dependencies.runGit = (command, args, { cwd }) => {
+    commands.push(args[0]);
+    if (args[0] === 'init') {
+      put(join(cwd, 'harness.json'), JSON.stringify(f.manifest));
+      blocked = join(cwd, '.git', 'index.lock');
+      put(blocked, 'fixture');
+    }
+    return '';
+  };
+  const originalRemove = fs.rmSync;
+  const mock = t.mock.method(fs, 'rmSync', (path, options) => {
+    if (path === blocked) throw new Error('EPERM fixture');
+    return originalRemove(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => f.run(['--del_agents', 'codex']));
+    assert.ok(commands.includes('commit') && commands.includes('push'));
+    assert.ok(f.logs.includes('清单 commit 和 push 已完成。'));
+    assert.ok(f.logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
+  } finally { mock.mock.restore(); syncBuiltinESMExports(); }
 });
 
 test('source conflicts, test failures and concurrent settings edits preserve local configuration', (t) => {
