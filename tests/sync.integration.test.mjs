@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -164,7 +164,7 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
 
   // The public home option must override inherited agent paths for the real
   // CLI, preflight subprocesses, shared lock and instruction/config writes.
-  const selectedHome = join(sandbox, 'selected home');
+  let selectedHome = join(sandbox, 'selected home');
   const originalInstructions = readFileSync(instructions, 'utf8');
   const originalSettings = readFileSync(join(dependencies.stateDir, 'harness.json'), 'utf8');
   // Git 2.25 does not honor GIT_CONFIG_GLOBAL. Keep the fixture-only URL
@@ -173,6 +173,13 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   const selectedEnv = { ...env, GIT_CONFIG_PARAMETERS: `${env.GIT_CONFIG_PARAMETERS ?? ''} '${rewrite.replaceAll("'", "'\\''")}'`.trim() };
   const selectedDependencies = { env: selectedEnv, cwd: sandbox, fetchManifest: () => JSON.stringify(catalog),
     fetchFragment: dependencies.fetchFragment, log: (message) => t.diagnostic(message) };
+  let selectedRunner = createSkillsRunner(homeDependencies(selectedHome, selectedDependencies));
+  let installedMode;
+  selectedDependencies.runSkills = (args) => {
+    const result = selectedRunner(args);
+    if (args[0] === 'add') installedMode = JSON.parse(result)[0].mode;
+    return result;
+  };
   assert.equal(runCommand('git', ['config', '--get', `url.${pathToFileURL(source).href}.insteadOf`],
     { env: homeDependencies(selectedHome, selectedDependencies).env, cwd: sandbox }).trim(), 'https://github.com/integration-fixture/skills.git');
   sync(['--home', selectedHome], selectedDependencies);
@@ -180,9 +187,32 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   assert.ok(readFileSync(join(selectedHome, '.codex', 'AGENTS.md'), 'utf8').includes('eh:new-rule:'));
   assert.ok(readFileSync(join(selectedHome, '.copilot', 'copilot-instructions.md'), 'utf8').includes('eh:new-rule:'));
   assert.ok(existsSync(join(selectedHome, '.everything-harness', 'harness.json')));
-  const selectedRunner = createSkillsRunner(homeDependencies(selectedHome, selectedDependencies));
+  const nativeSkill = (agent) => join(selectedHome, agent, 'skills', 'pdf-renamed');
+  assert.ok(['copy', 'symlink'].includes(installedMode));
+  for (const agent of ['.codex', '.copilot']) {
+    assert.equal(lstatSync(nativeSkill(agent)).isSymbolicLink(), installedMode === 'symlink');
+    assert.match(readFileSync(join(nativeSkill(agent), 'SKILL.md'), 'utf8'), /Renamed content/);
+    writeFileSync(join(nativeSkill(agent), 'stale.txt'), 'local stale file');
+  }
+  sync(['--home', selectedHome], selectedDependencies);
+  assert.ok(['.codex', '.copilot'].every((agent) => !existsSync(join(nativeSkill(agent), 'stale.txt'))));
   assert.ok(JSON.parse(selectedRunner(['list', '-g', '--json'])).every((entry) => entry.path.startsWith(selectedHome)));
+
+  // Removing one endpoint preserves the other agent and the CLI's source lock.
+  sync(['--home', selectedHome, '--local', '--del_agents', 'github-copilot'], selectedDependencies);
+  sync(['--home', selectedHome, '--local', '--del', 'skill:pdf-renamed'], selectedDependencies);
+  assert.ok(!existsSync(nativeSkill('.codex')));
+  assert.ok(existsSync(nativeSkill('.copilot')));
+  assert.equal(JSON.parse(selectedRunner(['list', '-g', '--json'])).find((entry) => entry.name === 'pdf-renamed').source, 'integration-fixture/skills');
+  sync(['--home', selectedHome, '--local', '--add_agents', 'github-copilot'], selectedDependencies);
+  sync(['--home', selectedHome, '--local', '--add', 'rule:auto'], selectedDependencies);
+
+  const movedHome = join(sandbox, 'moved home');
+  renameSync(selectedHome, movedHome); selectedHome = movedHome;
+  selectedRunner = createSkillsRunner(homeDependencies(selectedHome, selectedDependencies));
+  for (const agent of ['.codex', '.copilot']) assert.match(readFileSync(join(nativeSkill(agent), 'SKILL.md'), 'utf8'), /Renamed content/);
   sync(['--home', selectedHome, '--local', '--del', 'rule:auto'], selectedDependencies);
+  assert.ok(['.codex', '.copilot'].every((agent) => !existsSync(nativeSkill(agent))));
   assert.deepEqual(JSON.parse(selectedRunner(['list', '-g', '--json'])), []);
   assert.ok(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf-renamed'));
   assert.equal(readFileSync(instructions, 'utf8'), originalInstructions);

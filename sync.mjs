@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
@@ -143,7 +143,8 @@ export function homeDependencies(home, dependencies = {}) {
     CODEX_HOME: join(homeDir, '.codex'), COPILOT_HOME: join(homeDir, '.copilot'),
   });
   return { ...dependencies, env, gitEnv: dependencies.gitEnv ?? baseEnv, homeDir,
-    stateDir: join(homeDir, '.everything-harness'), sharedSkillsDir: join(homeDir, '.agents', 'skills') };
+    stateDir: join(homeDir, '.everything-harness'), sharedSkillsDir: join(homeDir, '.agents', 'skills'),
+    skillLoadDirs: { codex: join(homeDir, '.codex', 'skills'), 'github-copilot': join(homeDir, '.copilot', 'skills') } };
 }
 
 function objectKeys(value, keys, label) {
@@ -516,7 +517,43 @@ export function containsScripts(path) {
   });
 }
 
-function install(entries, { runSkills, installed, agents, log, scope = 'global' }) {
+// A home-scoped install keeps CLI-managed source and lock files, and exposes
+// only the selected skills in the session's agent-specific loading directories.
+export function exposeSkill(result, directories, { log = console.log, link = symlinkSync } = {}) {
+  skillName(result.name);
+  check(['copy', 'symlink'].includes(result.mode), `${result.name} 的安装结果缺少有效 mode。`);
+  const source = realpathSync(result.path);
+  for (const directory of directories) {
+    const target = join(directory, result.name);
+    if (existsSync(target) && realpathSync(target) === source
+      && (!lstatSync(target).isSymbolicLink() || result.mode === 'symlink')) continue;
+    mkdirSync(directory, { recursive: true });
+    const temporary = join(directory, `.${result.name}.${randomUUID()}.tmp`);
+    let mode = result.mode;
+    try {
+      if (mode === 'symlink') {
+        try { link(relative(realpathSync(directory), source), temporary, 'dir'); }
+        catch (error) {
+          rmSync(temporary, { recursive: true, force: true });
+          mode = 'copy';
+          log(`${result.name} 软链接失败，回退复制：${error.message}`);
+        }
+      }
+      if (mode === 'copy') cpSync(source, temporary, { recursive: true, dereference: true });
+      rmSync(target, { recursive: true, force: true });
+      renameSync(temporary, target);
+      log(`skill 加载入口（${mode}）：${target}`);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  }
+}
+
+function skillLoadPaths(name, context) {
+  return context.skillLoadDirs ? context.agents.map((agent) => join(context.skillLoadDirs[agent], name)) : [];
+}
+
+const entryExists = (path) => Boolean(lstatSync(path, { throwIfNoEntry: false }));
+
+function install(entries, { runSkills, installed, agents, log, scope = 'global', skillLoadDirs }) {
   checkSources(entries, installed);
   const jobs = installationJobs(entries, agents);
   for (const job of jobs) {
@@ -531,6 +568,7 @@ function install(entries, { runSkills, installed, agents, log, scope = 'global' 
           && Array.isArray(result.agents) && job.agents.every((agent) => result.agents.includes(AGENTS.get(agent))),
         `${name} 未完成安装：${result?.error ?? result?.status ?? '缺少安装结果'}`);
         installed.set(name, { ...result, source: job.source, sourceType: 'github' });
+        if (scope === 'global' && skillLoadDirs) exposeSkill(result, job.agents.map((agent) => skillLoadDirs[agent]), { log });
       }
     } catch (error) { throw new Error(`${label} 失败：${error.message}`); }
   }
@@ -539,7 +577,8 @@ function install(entries, { runSkills, installed, agents, log, scope = 'global' 
 function remove(entries, context) {
   checkSources(entries, context.installed);
   for (const entry of entries) {
-    if (!context.agents.some((agent) => hasAgent(context.installed.get(entry.name), agent, context.sharedSkillsDir))) {
+    const targets = skillLoadPaths(entry.name, context);
+    if (!targets.some(entryExists) && !context.agents.some((agent) => hasAgent(context.installed.get(entry.name), agent, context.sharedSkillsDir))) {
       context.log(`${entry.name} 的目标安装已不存在，继续更新设置。`);
       continue;
     }
@@ -547,11 +586,21 @@ function remove(entries, context) {
     try {
       const output = context.runSkills(['remove', entry.name, '-g', '--yes', '--agent', ...context.agents]);
       if (output.trim()) context.log(output.trim());
+      const shared = join(context.sharedSkillsDir, entry.name);
+      for (const target of targets) {
+        // A pre-existing parent link may alias the shared directory. Let the
+        // CLI decide whether that shared content is still needed by an agent.
+        if (existsSync(target) && existsSync(shared) && !lstatSync(target).isSymbolicLink()
+          && realpathSync(target) === realpathSync(shared)) continue;
+        rmSync(target, { recursive: true, force: true });
+      }
     } catch (error) { throw new Error(`${entry.source} / ${entry.name} 删除失败：${error.message}`); }
   }
   const remaining = installedSkills(context.runSkills(['list', '-g', '--json']));
   for (const entry of entries) {
-    check(!context.agents.some((agent) => hasAgent(remaining.get(entry.name), agent, context.sharedSkillsDir)),
+    const stillInstalled = context.skillLoadDirs ? skillLoadPaths(entry.name, context).some(entryExists)
+      : context.agents.some((agent) => hasAgent(remaining.get(entry.name), agent, context.sharedSkillsDir));
+    check(!stillInstalled,
       `${entry.name} 的目标安装仍存在（可能由其他 agent 共享），未修改设置或创建 commit。`);
   }
 }
@@ -750,7 +799,8 @@ function makeContext(dependencies, log, agents) {
   check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
   const runSkills = dependencies.runSkills ?? createSkillsRunner({ env: dependencies.env, cwd: dependencies.cwd });
   return { runSkills, installed: installedSkills(runSkills(['list', '-g', '--json'])),
-    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'), agents, log };
+    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'),
+    skillLoadDirs: dependencies.skillLoadDirs, agents, log };
 }
 
 export function sync(args, dependencies = {}) {
