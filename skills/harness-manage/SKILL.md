@@ -13,12 +13,12 @@ description: 管理 eh（everything-harness）的 skill、AGENTS.md 片段和同
 
 执行同步指令前，先确认当前 session 实际使用的 skill 目录，再生成命令：
 
-1. 以当前 session 的 skill 清单、加载路径或实际读取的 `SKILL.md` 路径为依据。优先检查本 skill 的安装位置；仓库中的 `skills/` 源码、当前工作目录和内置 `.system` 技能目录不能单独作为同步位置的依据。
-2. 展开目录别名并检查软链接，确认安装目录与实际文件的对应关系。从 `<根目录>/.agents/skills/<skill>/SKILL.md` 推导同步根目录；agent 目录下的 skill 链接应追溯到共享安装位置。
+1. 以当前 session 的 skill 清单、环境中的$COPILOT_HOME、$CODEX_HOME或实际读取的 `SKILL.md` 路径为依据。优先检查本 skill 的安装位置；仓库中的 `skills/` 源码、当前工作目录和内置 `.system` 技能目录不能单独作为同步位置的依据。
+2. 展开目录别名，优先从 session 使用的 `<根目录>/.codex/skills/<skill>/SKILL.md` 或 `<根目录>/.copilot/skills/<skill>/SKILL.md` 推导同步根目录。遇到软链接时确认其共享正文位置，同步目标仍取 agent 加载入口所属的根目录。原有 session 直接从 `.agents/skills` 加载时，使用该共享目录所属根目录。
 3. 将同步根目录与用户主目录 `~` 比较，比较时规范化路径并处理软链接。根目录为用户主目录时可省略 `--home`；根目录为其他位置时，所有同步、增删、预检及重试指令都必须携带 `--home "<已确认的绝对根目录>"`。
 4. 用户明确指定目标位置时采用用户指定值；session 中存在多个安装根目录，或路径结构无法对应 `--home` 时，先确认目标再执行。
 
-例如，当前 session 从 `/work/demo/.agents/skills/harness-manage/SKILL.md` 加载本 skill，则同步命令为：
+例如，当前 session 从 `/work/demo/.codex/skills/harness-manage/SKILL.md` 加载本 skill，则同步命令为：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "/work/demo"
@@ -41,6 +41,8 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 ## 指定内容根目录
 
 `--home <目录>` 指定本次同步的根目录，默认用户主目录 `~`。传入后，skill、指令和本机配置分别使用该目录下的 `.agents`、`.codex`、`.copilot`、`.everything-harness`；显式目录优先于 `CODEX_HOME`、`COPILOT_HOME`。相对路径按启动目录解析，安装和检查子进程使用同一主目录。Git 发布沿用原环境的提交身份与认证。
+
+指定 `--home` 后，skills 在 `<home>/.agents/skills` 下载和维护共享正文，sync 再为生效 agents 建立 `<home>/.codex/skills/<name>`、`<home>/.copilot/skills/<name>` 加载入口。方式跟随 CLI 实际返回的 `mode`：copy 复制完整内容，symlink 建立相对软链接；链接失败时回退复制。更新会替换选中的入口，删除会清理对应入口；共享正文与来源锁仍由 skills 管理，其他 skill 和未选中 agent 的入口保留。整体移动 home 后，相对链接和实体副本仍可使用。未指定 `--home` 时沿用 skills 的原有安装方式。
 
 当已确认当前工作目录就是同步根目录时，可使用以下写法自动将所在文件夹传给 `--home`；其他位置使用已确认的绝对根目录。
 
@@ -123,6 +125,6 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 旧 `skills` / `skill`、`fragments` / `agents-md` 中的 `auto_sync` 迁为规则成员覆盖：true 优先沿用远程所属规则，未分组内容进入 auto；false 从生效规则移除。新文件缺失时迁入旧 `skills.json`、`agents-md.json`，保留原文件作备份，忽略旧 skill 级 agents。新文件存在后以新文件为准。列表和预检只读取迁移结果，同步或本机操作成功后保存新配置。新旧字段有歧义时先合并再重试。
 
-空 agents 暂停 sync 和预检，显式安装、删除需先设置目标。Codex 与 Copilot 共用 `~/.agents/skills` 的一份实体，目录与锁文件由 skills 管理。片段按 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 原位覆盖，保留标记外内容、未选中块和目标文件软链接。
+空 agents 暂停 sync 和预检，显式安装、删除需先设置目标。共享正文及锁文件由 skills 管理，显式 home 的 agent 加载入口由 sync 接入，保留已有父目录软链接。片段按 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 原位覆盖，保留标记外内容、未选中块和目标文件软链接。
 
 远程管理在临时副本中完成 Git 操作，保持用户工作区原状。失败时保留已完成的本机操作；commit / push 失败保留操作副本并提示重试。删除后的源码可从 Git 历史恢复。发布源码时只迁入说明、脚本和必要资源，凭据、缓存和本机配置放在安装目录之外。
