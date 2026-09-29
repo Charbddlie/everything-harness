@@ -13,4 +13,4 @@
 1. 禁止在用户没有要求，没有遇到错误的情况下，进行防御：使用sha256校验数据，使用复杂的安全和冗余设计
 
 ## git 设置
-对于git项目，设置name=jingwen xu，email=threadcup@gmail.com
+对于git项目，设置name=JingwenXu，email=threadcup@gmail.com
