@@ -1,6 +1,6 @@
 ---
 name: harness-manage
-description: 管理 eh 的本机同步范围与 harness 目标，以及新建、导入 skill 或 agents-md 的流程。当用户提到“更新skill”“同步eh”或向 eh 添加 skill、agents-md 时触发。
+description: 管理 eh 的本机同步范围与 harness 目标，以及新建、导入 skill 或 agents-md 的流程。当用户提到“更新skill”“同步eh”或向 eh 添加 skill、agents-md 时触发，对项目级skill或AGENTS.md做修改时不要触发。
 ---
 
 # Harness 管理
