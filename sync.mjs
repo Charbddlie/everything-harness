@@ -8,6 +8,7 @@ export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/harness.json`;
 export const AGENTS = new Map([['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
 const USAGE = `node sync.mjs [--dryrun | --list]
+node sync.mjs --clean [--dryrun]
 node sync.mjs [--local] --add <type>:<name>
 node sync.mjs [--local] --add <owner>/<repo> skill:<name>
 node sync.mjs [--local] --del <type>:<name> ...
@@ -16,6 +17,7 @@ node sync.mjs [--local] --add_agents <agent> ...
 node sync.mjs [--local] --del_agents <agent> ...
 type: skill | agents-md | rule
 所有模式支持 --home <目录>，默认用户主目录（~）。
+--clean 仅清理本机项目内容并保留配置，始终处理用户主目录，--home 增加清理目标；--clean --dryrun 预览清理。
 --add 接收一个或两个参数；自有 skill 单参数默认来源为 ${OWN_SOURCE}。`;
 
 function check(condition, message) { if (!condition) throw new Error(message); }
@@ -110,6 +112,15 @@ export function parseArgs(args) {
       const value = args[++i];
       check(typeof value === 'string' && value.trim() && !value.startsWith('-') && !value.includes('\0'), `${arg} 需要有效的目录参数。`);
       options.home = value;
+      continue;
+    }
+    if (arg === '--clean' && ['sync', 'dryrun'].includes(options.mode)) {
+      options.dryrun = options.mode === 'dryrun';
+      options.mode = 'clean';
+      continue;
+    }
+    if (arg === '--dryrun' && options.mode === 'clean' && !options.dryrun) {
+      options.dryrun = true;
       continue;
     }
     if (['--add', '--del', '--list', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
@@ -954,6 +965,42 @@ function makeContext(dependencies, log, agents, cleanup = false) {
     legacySkillsDir: join(dependencies.homeDir ?? homedir(), '.agents', 'skills'), log };
 }
 
+function clean(options, dependencies, log) {
+  const userHome = resolve(dependencies.homeDir ?? homedir()), roots = [userHome];
+  if (options.home !== undefined) {
+    const selected = homeDependencies(options.home, dependencies).homeDir;
+    if (relative(userHome, selected) !== '') roots.push(selected);
+  }
+  for (const root of roots) {
+    check(!existsSync(root) || statSync(root).isDirectory(), `清理根目录不是目录：${root}`);
+  }
+  log('读取清单', { stage: true });
+  const manifest = validateManifest(parseJson((dependencies.fetchManifest ?? fetchManifest)(), '远程清单'));
+  const names = new Set([...manifest.skill, ...deletedEntries(manifest, 'skill')].map(({ name }) => name));
+  const paths = new Set(), instructions = [];
+  for (const root of roots) {
+    const targets = cleanupPaths({ homeDir: root, env: root === userHome ? dependencies.env ?? process.env : {} });
+    for (const directory of targets.skills) for (const name of names) {
+      const path = join(directory, name);
+      if (entryExists(path)) paths.add(path);
+    }
+    instructions.push(...targets.instructions);
+  }
+  const writes = prepareInstructionCleanup(instructions);
+  log('清理 skill 和 sysprompt', { stage: true });
+  const failures = [];
+  for (const path of paths) {
+    try {
+      if (!options.dryrun) removeDirectory(path);
+      log(`${options.dryrun ? '将删除' : '删除'} skill：${path}`, { status: '删除' });
+    } catch (error) { failures.push(error.message); log(error.message, { status: '失败' }); }
+  }
+  failures.push(...applyInstructionCleanup(writes, options.dryrun, log));
+  check(!failures.length, `清理失败；已完成操作保留：\n${failures.join('\n')}`);
+  log('完成', { stage: true });
+  log(`${options.dryrun ? '预览' : '清理'}完成：${paths.size} 个 skill 路径，${writes.size} 个指令文件。`, { status: '完成' });
+}
+
 export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? (options.help || options.mode === 'list' ? console.log : createProgressLogger());
@@ -963,6 +1010,7 @@ export function sync(args, dependencies = {}) {
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
   check(major > 22 || (major === 22 && minor >= 20), '需要 Node.js ≥22.20.0。');
+  if (options.mode === 'clean') return clean(options, dependencies, log);
   dependencies = homeDependencies(options.home, dependencies);
   if (['add', 'del', 'auto_sync'].includes(options.mode) || agentMode(options.mode)) {
     return options.local ? withRepositories(dependencies, log, (scoped) => manageLocal(options, scoped, log))

@@ -42,6 +42,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 | 无参数 | 按清单顺序执行同步规则 |
 | `--list` | 显示远程内容、本机覆盖、agents 和删除项 |
 | `--dryrun` | 只下载并检查；失败返回非零，不修改正式安装、片段和配置 |
+| `--clean` | 仅清理本机项目内容，保留配置；可加 `--dryrun` 预览 |
 | `--add skill:NAME` | 添加自有 skill |
 | `--add owner/repo skill:NAME` | 添加指定 GitHub 来源的 skill |
 | `--add agents-md:NAME` | 添加自有指令片段 |
@@ -91,21 +92,21 @@ dryrun 环境检查仅适用于自有来源，自有 skill 包含脚本时必须
 先预览，再去掉 `--dryrun` 执行：
 
 ```powershell
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --dryrun"
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --clean --dryrun"
 ```
 
 额外清理已确认的内容根目录：
 
 ```powershell
-cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --home `"$($PWD.Path)`" --dryrun"
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --clean --home `"$($PWD.Path)`" --dryrun"
 ```
 
 Linux / macOS：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --home "$PWD" --dryrun
+curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --clean --home "$PWD" --dryrun
 ```
 
-clean 的 `--home` 是额外目标，始终同时清理用户主目录。它删除两处 `.agents/skills`、`.codex/skills`、`.copilot/skills` 及用户 agent 环境变量指定位置中，远程活动项和删除项的所有同名 skill，不受来源标记或本机开关限制。
+`--clean` 读取清单后仅执行本机清理，`--home` 是额外目标，始终同时清理用户主目录。它删除两处 `.agents/skills`、`.codex/skills`、`.copilot/skills` 及用户 agent 环境变量指定位置中，远程活动项和删除项的所有同名 skill，不受来源标记或本机开关限制。
 
 指令清理覆盖各根目录及上述三个子目录中的 `AGENTS.md`、`CLAUDE.md`、`copilot-instructions.md`，移除所有 eh 标记块，保留文件和其他正文。保留其他 skills、本机配置、锁文件和远程清单；再次同步会重新安装启用的内容。执行失败会显示路径，已完成操作不回滚。

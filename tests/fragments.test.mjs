@@ -3,7 +3,6 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { clean } from '../clean.mjs';
 import { instructionPaths, sync } from '../sync.mjs';
 
 const fragment = (name) => ({ name });
@@ -62,7 +61,7 @@ test('download or target validation failures happen before skill installation or
   assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
 });
 
-test('sync and clean share marker validation, preview and link-preserving cleanup with distinct scopes', async (t) => {
+test('sync and clean share marker validation, preview and link-preserving cleanup with distinct scopes', (t) => {
   const f = fixture(t);
   f.manifest.skill = [];
   f.manifest['sync-rules'].auto = [];
@@ -76,14 +75,14 @@ test('sync and clean share marker validation, preview and link-preserving cleanu
   }
   put(actual, '<!-- eh:old:start -->\nBroken');
   assert.throws(() => f.run(), /缺少结束标记/);
-  await assert.rejects(clean([], f.dependencies), /缺少结束标记/);
+  assert.throws(() => sync(['--clean'], f.dependencies), /缺少结束标记/);
   put(actual, original);
   f.run(['--dryrun']);
-  await clean(['--dryrun'], f.dependencies);
+  sync(['--dryrun', '--clean'], f.dependencies);
   assert.equal(readFileSync(actual, 'utf8'), original);
   f.run();
   assert.equal(readFileSync(actual, 'utf8'), `Personal\n\n${block('unmanaged', 'Keep')}\n`);
-  await clean([], f.dependencies);
+  sync(['--clean'], f.dependencies);
   assert.equal(readFileSync(actual, 'utf8'), 'Personal\n\n\n');
   assert.ok(f.targets.every((target) => lstatSync(target).isSymbolicLink()));
 });
