@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { clean } from '../clean.mjs';
 import { instructionPaths, parseArgs, renderFragments, sync, validateFragments, validateManifest } from '../sync.mjs';
 
 const fragment = (name) => ({ name });
@@ -137,7 +138,7 @@ test('renamed fragment removes the old block before adding the new one, overridi
   const original = `Intro\n${block('old', 'Local edits')}\n${block('unmanaged', 'Keep')}\nEnd`;
   f.targets.forEach((path) => put(path, original));
   f.run(['--dryrun']);
-  assert.ok(f.logs.some((line) => line.includes('片段已标记删除：old')));
+  assert.ok(f.logs.some((line) => line === `将移除 eh 标记块：${f.targets[0]}`));
   assert.equal(readFileSync(f.targets[0], 'utf8'), original);
   f.run();
   for (const path of f.targets) {
@@ -163,6 +164,32 @@ test('fragment deletion with no replacement never creates empty instruction file
   put(f.targets[0], block('old', 'Remove'));
   f.run();
   assert.equal(readFileSync(f.targets[0], 'utf8'), '');
+});
+
+test('sync and clean share marker validation, preview and link-preserving cleanup with distinct scopes', async (t) => {
+  const f = fixture(t);
+  f.manifest.skill = [];
+  f.manifest['sync-rules'].auto = [];
+  f.manifest.deleted = [{ type_name: 'agents-md:old' }];
+  const actual = join(f.root, 'instructions.md');
+  const original = `Personal\n${block('old', 'Remove')}\n${block('unmanaged', 'Keep')}\n`;
+  put(actual, original);
+  for (const target of f.targets) {
+    mkdirSync(dirname(target), { recursive: true });
+    symlinkSync(actual, target);
+  }
+  put(actual, '<!-- eh:old:start -->\nBroken');
+  assert.throws(() => f.run(), /缺少结束标记/);
+  await assert.rejects(clean([], f.dependencies), /缺少结束标记/);
+  put(actual, original);
+  f.run(['--dryrun']);
+  await clean(['--dryrun'], f.dependencies);
+  assert.equal(readFileSync(actual, 'utf8'), original);
+  f.run();
+  assert.equal(readFileSync(actual, 'utf8'), `Personal\n\n${block('unmanaged', 'Keep')}\n`);
+  await clean([], f.dependencies);
+  assert.equal(readFileSync(actual, 'utf8'), 'Personal\n\n\n');
+  assert.ok(f.targets.every((target) => lstatSync(target).isSymbolicLink()));
 });
 
 test('fragment records reject source, per-fragment agents and invalid deletion flags', () => {

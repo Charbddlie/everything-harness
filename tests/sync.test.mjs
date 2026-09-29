@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -50,6 +50,63 @@ test('sync downloads each source once and installs exactly the checked content',
   assert.equal(readFileSync(join(f.shared('unmanaged'), 'SKILL.md'), 'utf8'), 'Keep');
   assert.deepEqual(readdirSync(f.tempDir), []);
   assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
+});
+
+test('all rules share downloaded repositories and read fragments from the same snapshot', (t) => {
+  const f = fixture(t, {
+    agents, skill: [entry('one', OWN_SOURCE), entry('two', OWN_SOURCE), entry('new'), entry('unused', 'unused/repo')],
+    'agents-md': [{ name: 'base' }, { name: 'windows' }], deleted: [{ type_name: 'agents-md:old' }],
+    'sync-rules': {
+      auto: [member('one'), member('new'), { type_name: 'agents-md:base' }],
+      win: [member('two'), { type_name: 'agents-md:windows' }], learn: [member('unused')],
+    },
+  });
+  f.dependencies.platform = 'win32';
+  delete f.dependencies.fetchFragment;
+  const target = join(f.home, '.codex', 'AGENTS.md'), snapshots = [];
+  put(target, 'Personal\n<!-- eh:old:start -->\nOld\n<!-- eh:old:end -->\n');
+  let version = 1;
+  f.dependencies.fetchRepository = (source, path) => {
+    assert.ok(!readFileSync(target, 'utf8').includes('eh:old:'));
+    f.downloads.push(source);
+    for (const { name } of f.manifest.skill.filter((entry) => entry.source === source)) {
+      put(join(path, 'skills', name, 'SKILL.md'), text(name, `Version ${version}`));
+    }
+    if (source === OWN_SOURCE) for (const name of ['base', 'windows']) put(join(path, 'agents-md', `${name}.md`), `${name} ${version}`);
+  };
+  f.dependencies.runDryruns = (entries, prepared) => {
+    assert.deepEqual(f.downloads.slice(-2), [OWN_SOURCE, 'example/skills']);
+    for (const entry of entries.filter(({ source }) => source === OWN_SOURCE)) snapshots.push(dirname(dirname(prepared.get(entry.name).path)));
+  };
+  f.run();
+  assert.deepEqual(f.downloads, [OWN_SOURCE, 'example/skills']);
+  assert.equal(snapshots[0], snapshots[1]);
+  assert.equal(f.logs.filter((line) => line === '下载源码').length, 1);
+  assert.match(readFileSync(target, 'utf8'), /Personal[\s\S]*base 1[\s\S]*windows 1/);
+  version++;
+  f.run();
+  assert.deepEqual(f.downloads, [OWN_SOURCE, 'example/skills', OWN_SOURCE, 'example/skills']);
+  assert.notEqual(snapshots[0], snapshots[2]);
+  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version 2/);
+  assert.match(readFileSync(target, 'utf8'), /base 2[\s\S]*windows 2/);
+  assert.deepEqual(readdirSync(f.tempDir), []);
+});
+
+test('a failed source is attempted once across rules and retried on the next invocation', (t) => {
+  const f = fixture(t, { agents, skill: [entry('one'), entry('two')],
+    'sync-rules': { auto: [member('one')], win: [member('two')] } });
+  f.dependencies.platform = 'win32';
+  const download = f.dependencies.fetchRepository;
+  let attempts = 0;
+  f.dependencies.fetchRepository = () => { attempts++; throw new Error('network unavailable'); };
+  assert.throws(() => f.run(), /auto: network unavailable, win: network unavailable/);
+  assert.equal(attempts, 1);
+  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(readdirSync(f.tempDir), []);
+  f.dependencies.fetchRepository = download;
+  f.run();
+  assert.deepEqual(f.downloads, ['example/skills']);
+  assert.ok(existsSync(f.shared('one')) && existsSync(f.shared('two')));
 });
 
 test('source conflict blocks downloads, replacement and deletion', (t) => {
@@ -130,9 +187,9 @@ test('progress output numbers actual stages and labels warnings without hiding a
   f.run();
   const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置', '2. 自动配置: auto',
-    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
-    '3. 创建本地设置',
+    '1. 读取清单和本机设置', '2. 清理已删除的 skill', '3. 清理 sysprompt', '4. 下载源码',
+    '5. 自动配置: auto', '5.1 检查 skill 环境', '5.2 应用 skill 到目标目录',
+    '6. 清理临时目录', '7. 创建本地设置',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[警告] [one] 失败')));
   assert.ok(f.logs.some((line) => line.includes('[通过] 覆盖安装')));
@@ -142,8 +199,8 @@ test('progress output numbers actual stages and labels warnings without hiding a
   f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   assert.throws(() => f.run(['--dryrun']), /环境检查失败/);
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置', '2. 自动配置: auto',
-    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 清理临时目录',
+    '1. 读取清单和本机设置', '2. 预览 skill 删除', '3. 清理 sysprompt', '4. 下载源码',
+    '5. 自动配置: auto', '5.1 检查 skill 环境', '6. 清理临时目录',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[失败] [one]')));
   assert.ok(!f.logs.some((line) => line.includes('应用 skill 到目标目录')));
@@ -159,10 +216,10 @@ test('automatic configuration resets subnumbering per rule and keeps later stage
   f.run();
   const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置',
-    '2. 自动配置: auto', '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
-    '3. 自动配置: win', '3.1 下载 skill 源码', '3.2 检查 skill 环境', '3.3 应用 skill 到目标目录', '3.4 清理临时目录',
-    '4. 自动配置: learn', '5. 创建本地设置',
+    '1. 读取清单和本机设置', '2. 清理已删除的 skill', '3. 清理 sysprompt', '4. 下载源码',
+    '5. 自动配置: auto', '5.1 检查 skill 环境', '5.2 应用 skill 到目标目录',
+    '6. 自动配置: win', '6.1 检查 skill 环境', '6.2 应用 skill 到目标目录',
+    '7. 自动配置: learn', '8. 清理临时目录', '9. 创建本地设置',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[跳过] 跳过 rule:learn')));
   f.logs.length = 0;
@@ -170,8 +227,8 @@ test('automatic configuration resets subnumbering per rule and keeps later stage
   f.run(['--local', '--add', 'rule:win']);
   assert.deepEqual(stages(), [
     '1. 读取清单和本机设置', '2. 自动配置: win',
-    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
-    '3. 保存本机设置',
+    '2.1 下载源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录',
+    '3. 清理临时目录', '4. 保存本机设置',
   ]);
 });
 
@@ -180,8 +237,60 @@ test('download failures preserve content and never report a completed sync', (t)
   f.logs.length = 0;
   f.dependencies.fetchRepository = () => { throw new Error('network unavailable'); };
   assert.throws(() => f.run(), /network unavailable/);
+  assert.ok(!f.logs.some((line) => line.startsWith('下载完成：example/skills')));
   assert.ok(!f.logs.includes('规则同步和环境检查完成。'));
   assert.match(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), /Version one/);
+});
+
+test('piped output shows the heading first and each source after its download', { timeout: 10_000 }, async (t) => {
+  const f = fixture(t);
+  f.manifest.skill.push(entry('new', 'other/skills'));
+  f.manifest['sync-rules'].auto.push(member('new'));
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { mkdirSync, writeFileSync, readSync } from 'node:fs';
+    import { join } from 'node:path';
+    import { sync } from ${JSON.stringify(new URL('../sync.mjs', import.meta.url).href)};
+    const finishDownload = () => {
+      if (readSync(0, Buffer.alloc(1), 0, 1, null) !== 1) throw new Error('Missing download acknowledgement');
+    };
+    sync(['--dryrun'], {
+      homeDir: ${JSON.stringify(f.home)}, tempDir: ${JSON.stringify(f.tempDir)}, env: {},
+      fetchManifest() { return ${JSON.stringify(JSON.stringify(f.manifest))}; },
+      fetchRepository(source, path) {
+        finishDownload();
+        for (const name of ['one', 'two', 'new']) {
+          const directory = join(path, 'skills', name);
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, 'SKILL.md'), '---\\nname: ' + name + '\\ndescription: Test fixture.\\n---\\n');
+        }
+      },
+    });
+  `], { stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => child.kill());
+  const events = [];
+  let pending = '', errors = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { errors += chunk; });
+  child.stdout.on('data', (chunk) => {
+    pending += chunk;
+    const lines = pending.split('\n');
+    pending = lines.pop();
+    for (const line of lines) {
+      const event = line.match(/4\. 下载源码|下载完成：[^ ]+/);
+      if (!event) continue;
+      events.push(event[0]);
+      if (events.length <= 2) child.stdin.write('1');
+    }
+  });
+  const code = await new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', resolve);
+  });
+  assert.equal(code, 0, errors);
+  assert.deepEqual(events, ['4. 下载源码', '下载完成：example/skills', '下载完成：other/skills']);
+  assert.ok(!existsSync(f.home));
+  assert.deepEqual(readdirSync(f.tempDir), []);
 });
 
 test('tombstones delete before new installs, respect source conflicts and leave unmanaged content', (t) => {
@@ -266,6 +375,7 @@ function remoteFixture(t, manifest = { agents, skill: [entry('one', OWN_SOURCE)]
   git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
   put(join(repository, 'harness.json'), JSON.stringify(manifest) + '\n');
   put(join(repository, 'skills', 'one', 'SKILL.md'), text('one'));
+  put(join(repository, 'skills', 'two', 'SKILL.md'), text('two'));
   put(join(repository, 'agents-md', 'base.md'), 'Instructions');
   git(['add', '.']); git(['commit', '--quiet', '-m', 'Initial']);
   git(['remote', 'add', 'origin', remote]); git(['push', '--quiet', '-u', 'origin', 'main']);
@@ -273,6 +383,21 @@ function remoteFixture(t, manifest = { agents, skill: [entry('one', OWN_SOURCE)]
   return { ...f, repository, git, remote,
     remoteManifest: () => JSON.parse(runCommand('git', ['--git-dir', remote, 'show', 'main:harness.json'])) };
 }
+
+test('remote own-skill and fragment additions reuse the publication checkout', (t) => {
+  const f = remoteFixture(t);
+  delete f.dependencies.fetchFragment;
+  f.dependencies.fetchRepository = () => assert.fail('The publication checkout already contains the source');
+  put(join(f.repository, 'agents-md', 'base.md'), 'Unpublished local edit');
+  f.run(['--add', 'skill:two']);
+  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version one/);
+  f.run(['--add', 'agents-md:base']);
+  assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
+  assert.equal(readFileSync(join(f.repository, 'agents-md', 'base.md'), 'utf8'), 'Unpublished local edit');
+  assert.ok(f.remoteManifest().skill.some(({ name }) => name === 'two'));
+  assert.deepEqual(f.remoteManifest()['agents-md'], [{ name: 'base' }]);
+  assert.deepEqual(readdirSync(f.tempDir), []);
+});
 
 test('remote add applies failed-check content before publishing without changing a dirty user checkout', (t) => {
   const f = remoteFixture(t), events = [];

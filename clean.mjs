@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
@@ -39,27 +39,21 @@ export async function clean(args, dependencies = {}) {
   for (const root of roots) {
     if (existsSync(root) && !statSync(root).isDirectory()) throw new Error(`清理根目录不是目录：${root}`);
   }
-  const { fetchManifest, validateManifest, renderFragments, removeDirectory, writeAtomic } = await loadRuntime();
+  const { fetchManifest, validateManifest, prepareInstructionCleanup, applyInstructionCleanup, removeDirectory } = await loadRuntime();
   const manifest = validateManifest(JSON.parse((dependencies.fetchManifest ?? fetchManifest)()));
   const names = new Set([...manifest.skill.map(({ name }) => name),
     ...(manifest.deleted ?? []).filter(({ type_name }) => type_name.startsWith('skill:')).map(({ type_name }) => type_name.slice(6))]);
-  const paths = [], writes = new Map();
+  const paths = [], instructions = [];
   for (const root of roots) {
     for (const directory of DIRECTORIES) for (const name of names) {
       const path = join(root, directory, 'skills', name);
       if (lstatSync(path, { throwIfNoEntry: false })) paths.push(path);
     }
     for (const directory of [root, ...DIRECTORIES.map((name) => join(root, name))]) for (const name of INSTRUCTIONS) {
-      const target = join(directory, name);
-      if (!existsSync(target)) continue;
-      const path = realpathSync(target);
-      if (writes.has(path)) continue;
-      const original = readFileSync(path, 'utf8');
-      const blocks = [...original.matchAll(/<!-- eh:([a-z0-9-]+):start -->/g)].map((match) => ({ name: match[1], deleted: true }));
-      const content = renderFragments(original, blocks);
-      if (content !== original) writes.set(path, content);
+      instructions.push(join(directory, name));
     }
   }
+  const writes = prepareInstructionCleanup(instructions);
   const failures = [];
   for (const path of paths) {
     log(`${dryrun ? '将删除' : '删除'} skill：${path}`);
@@ -68,13 +62,7 @@ export async function clean(args, dependencies = {}) {
       catch (error) { failures.push(error.message); log(error.message); }
     }
   }
-  for (const [path, content] of writes) {
-    log(`${dryrun ? '将移除' : '移除'} eh 标记块：${path}`);
-    if (!dryrun) {
-      try { writeAtomic(path, content, log); }
-      catch (error) { const message = `${path} 写入失败：${error.message}`; failures.push(message); log(message); }
-    }
-  }
+  failures.push(...applyInstructionCleanup(writes, dryrun, log));
   if (failures.length) throw new Error(`清理失败；已完成操作保留：\n${failures.join('\n')}`);
   log(`${dryrun ? '预览' : '清理'}完成：${paths.length} 个 skill 路径，${writes.size} 个指令文件。`);
 }
