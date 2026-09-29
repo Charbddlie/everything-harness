@@ -71,6 +71,7 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   };
   const calls = [];
   const dependencies = {
+    env, homeDir: profile,
     stateDir: join(profile, '.everything-harness'),
     sharedSkillsDir: join(profile, '.agents', 'skills'),
     fetchManifest: () => JSON.stringify(catalog),
@@ -114,9 +115,9 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   assert.equal(calls.length, beforeAgentChange);
   sync([], dependencies);
   assert.deepEqual(calls.at(-1), ['add', catalog.skills[0].source, '--skill', 'pdf', '--agent', 'codex', '-g', '--yes', '--json']);
-  const beforeDelete = readFileSync(join(dependencies.stateDir, 'skills.json'), 'utf8');
+  const beforeDelete = readFileSync(join(dependencies.stateDir, 'harness.json'), 'utf8');
   assert.throws(() => sync(['--local', '--del', 'pdf'], dependencies), /目标安装仍存在/);
-  assert.equal(readFileSync(join(dependencies.stateDir, 'skills.json'), 'utf8'), beforeDelete);
+  assert.equal(readFileSync(join(dependencies.stateDir, 'harness.json'), 'utf8'), beforeDelete);
   sync(['--local', '--add_agents', 'github-copilot'], dependencies);
   sync(['--local', '--del', 'pdf'], dependencies);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf'), false);
@@ -124,8 +125,33 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   sync([], dependencies);
   assert.equal(calls.filter((args) => args[0] === 'add').length, afterDelete);
   sync(['--local', '--add', 'pdf'], dependencies);
-  assert.equal(JSON.parse(readFileSync(join(dependencies.stateDir, 'skills.json'))).skills[0].auto_sync, true);
+  assert.equal(JSON.parse(readFileSync(join(dependencies.stateDir, 'harness.json'))).skills[0].auto_sync, true);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf'), true);
+
+  // Exercise a rename through real CLI removal and installation with a local override on the old name.
+  const renamed = join(source, 'skills', 'pdf-renamed');
+  mkdirSync(renamed);
+  writeFileSync(join(renamed, 'SKILL.md'), '---\nname: pdf-renamed\ndescription: Renamed test skill.\n---\n\nRenamed content\n');
+  git(['add', '.']);
+  git(['-c', 'user.name=Skill Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'Rename fixture']);
+  catalog.skills[0] = { ...catalog.skills[0], deleted: true, auto_sync: false };
+  catalog.skills.push({ name: 'pdf-renamed', source: 'integration-fixture/skills', auto_sync: true });
+  const instructions = join(env.CODEX_HOME, 'AGENTS.md');
+  writeFileSync(instructions, 'Personal\n<!-- eh:old-rule:start -->\nOld\n<!-- eh:old-rule:end -->\n');
+  catalog.fragments = [{ name: 'old-rule', auto_sync: false, deleted: true }, { name: 'new-rule', auto_sync: true }];
+  dependencies.fetchFragment = () => '## New rule\nKeep it simple.';
+  sync([], dependencies);
+  const afterRename = JSON.parse(runSkills(['list', '-g', '--json']));
+  assert.ok(!afterRename.some((entry) => entry.name === 'pdf'));
+  assert.ok(afterRename.some((entry) => entry.name === 'pdf-renamed'));
+  assert.ok(!existsSync(sharedPath));
+  assert.match(readFileSync(join(profile, '.agents', 'skills', 'pdf-renamed', 'SKILL.md'), 'utf8'), /Renamed content/);
+  assert.ok(!readFileSync(instructions, 'utf8').includes('eh:old-rule:'));
+  assert.ok(readFileSync(instructions, 'utf8').startsWith('Personal\n'));
+  assert.ok(readFileSync(instructions, 'utf8').includes('eh:new-rule:'));
+  const removalCount = calls.filter((args) => args[0] === 'remove').length;
+  sync([], dependencies);
+  assert.equal(calls.filter((args) => args[0] === 'remove').length, removalCount);
   runSkills(['remove', 'pdf-analyze', '-g', '--yes', '--agent', 'codex', 'github-copilot']);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf-analyze'), false);
 });

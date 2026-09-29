@@ -1,6 +1,6 @@
 # Everything Harness
 
-个人 skill 托管、使用清单与同步工具。自有内容放在 `skills/`，自有和第三方来源统一记录在 `skills.json`；本机安装、更新和删除交给系统的 `npx skills`。
+Everything Harness 简称 `eh`，使用 `harness.json` 统一管理个人 skill 和常驻指令片段。Skill 放在 `skills/`，交给 `npx skills` 安装；片段放在 `agents-md/`，由 sync 写入全局指令文件。
 
 ## 安装与检查
 
@@ -22,14 +22,15 @@ export all_proxy=http://127.0.0.1:7890
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-每次运行都会覆盖安装开启自动同步的 skill。修改自有 skill 后，先推送源码，再运行同一条命令同步。
+每次运行都会覆盖安装开启自动同步的 skill，并覆盖更新开启的指令片段。内容单向发布：修改本地仓库 → commit / push → 运行 sync → 覆盖本机安装内容。本机正文修改会被远程替换，本机 JSON 仅保存开关和目标选择。
 
-所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 的目标，支持 **Codex 和 GitHub Copilot**，默认包含两者，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
+所有命令使用远程 `main` 的清单。顶层 `agents` 统一设置所有 skill 和片段的目标，支持 **Codex 和 GitHub Copilot**，默认包含两者，本机可覆盖。目标由配置明确指定，不根据本机已安装的应用自动选择。
 
 - 普通运行对生效 `auto_sync=true` 的 skill 按来源分组，调用 `skills add`，覆盖安装到全部生效 agents。自有和第三方 skill 使用相同流程。
+- `deleted=true` 的条目会先提示再自动清理，删除状态优先于本机开关。Skill 通过 CLI 删除，片段移除完整标记块；删除记录继续保留。
 - 覆盖安装会替换安装目录中的本地修改；源码应在源仓库维护，凭据和本机配置应放在安装目录之外。
 - 安装后，运行本次选中的所有 skill 的 `dryrun.mjs`。环境错误逐项显示，全部检查后以非零状态退出；已安装内容保留。
-- `--dryrun` 只检查开启自动同步的 skill，不安装、不更新；修复环境后可反复运行。
+- `--dryrun` 检查开启自动同步的 skill 环境，以及片段正文和目标标记；检查期间安装内容保持原样。
 - 无 dryrun 的纯说明 skill 会跳过检查。自有 skill 包含脚本却缺少 dryrun 会报错；第三方若提供 `dryrun.mjs`，同样执行。
 - 来源冲突会在安装前报错；旧安装器留下的无来源记录允许通过显式安装接管。
 
@@ -47,18 +48,18 @@ Windows PowerShell（Linux / macOS 去掉外层 `cmd /d /c "…"`，将 `curl.ex
 # 为生效 agents 增加第三方 skill
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --add owner/repo skill-name"
 
-# 删除生效 agents 中的安装和远程清单记录
+# 删除生效 agents 中的安装，保留远程删除记录
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --del skill-name"
 
 # 查看清单
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --list"
 ```
 
-`--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`，已有条目保留原开关。`--del skill-one skill-two` 同样支持多个名称，删除生效 agents 中的安装后移除清单记录。删除不影响 `skills/` 中的源代码。
+`--add owner/repo skill-one skill-two` 可一次增加多个 skill，新条目默认 `auto_sync=true`，已有条目保留原开关。`--del skill-one skill-two` 删除生效 agents 中的安装后，移除 eh 仓库中的对应自有 skill 目录，仅在 `harness.json` 保留名称、来源和删除记录（`deleted=true`、`auto_sync=false`）。第三方来源仓库保持不变。
 
-`--list` 显示远程、本机和生效 agents，以及每个 skill 的来源、远程 `auto_sync`、本机 `auto_sync` 和生效 `auto_sync`。本机没有覆盖时显示“跟随远程”；不因开关为 false 隐藏条目。
+`--list` 显示远程、本机和生效 agents，以及每个条目的开关、删除状态和 Skill 来源。本机没有覆盖时显示“跟随远程”；删除记录始终显示。`--dryrun` 预告清理，但不执行删除。
 
-脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后只提交 `skills.json` 并推送，成功后清理临时副本。
+脚本在临时目录获取最新 `main`，先尝试 HTTPS，失败后尝试 SSH，沿用已有 GitHub 认证。本机安装和 dryrun 成功后才写入清单；删除后会重新检查 CLI 状态，确认目标已移除。随后提交 `harness.json` 并推送；删除操作同时提交对应自有 skill 目录或片段 Markdown 文件的删除，成功后清理临时副本。
 
 失败后按提示修复并重新运行同一条命令，脚本自动重新获取清单、补齐操作和提交推送。已完成的本机操作保留；commit 或 push 失败时保留操作副本并显示路径。远程发生并发改动时正常拒绝推送，不强推，不修改用户现有工作区。
 
@@ -68,7 +69,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ## 全局 agents
 
-可设置的名称为 `codex`、`github-copilot`，一次可传多个。所有 skill 使用同一份目标列表，不设置单个 skill 的 agents。
+可设置的名称为 `codex`、`github-copilot`，一次可传多个。所有 skill 和片段使用同一份目标列表，不设置单条记录的 agents。
 
 ```powershell
 # 修改远程全局 agents：自动 commit / push
@@ -81,13 +82,15 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --local --add_agents github-copilot"
 ```
 
-这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/skills.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。
+这两个选项只修改配置，下次同步生效，不立即安装或卸载。带 `--local` 时，从当前生效列表增删后，将完整列表保存到本机 `~/.everything-harness/harness.json` 顶层 `agents`，覆盖远程列表；不带时只改远程列表，本机覆盖保持不变。移除本机 `agents` 字段即可恢复跟随远程。重复添加或删除同一个目标不会重复记录。
 
 `agents: []` 表示没有目标，普通同步和 dryrun 都会跳过。此时 skill 的 add/del 会提示先设置 agent，不修改安装或 skill 清单。
 
 ## 自动同步与本机选择
 
-远程 `skills.json` 的 `auto_sync` 是默认值。每次同步会读取 `~/.everything-harness/skills.json`：同名条目的 `auto_sync` 覆盖远程默认，没有本机条目就跟随远程。首次运行只创建 `{"skills": []}`，agents 和开关都跟随远程，以后不会覆盖已有选择。来源始终使用最新远程清单；从本机文件移除某个 skill 条目即可恢复其开关跟随远程。
+远程 `harness.json` 的 `auto_sync` 是默认值。每次同步读取 `~/.everything-harness/harness.json`：同一数组中同名条目的开关覆盖远程默认，缺省跟随远程。首次创建 `{"skills":[],"fragments":[]}`，agents 和开关均跟随远程。Skill 来源、片段正文和删除状态始终取远程；删除标记优先于本机开关。
+
+当本机新文件缺失时，自动合并旧 `skills.json` 与 `agents-md.json` 中的开关和全局 agents，保留旧文件作备份。`--list`、`--dryrun` 只读取迁移结果，普通同步或本机设置命令保存到 `harness.json`。新文件存在后只使用新文件。
 
 在同一个远程入口后加参数即可操作。以下命令仍使用远程脚本，无需下载其他脚本：
 
@@ -110,6 +113,77 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 本机 add/del 只接收远程清单已有的 skill 名称，支持一次多个，使用生效的全局 agents。开关按整个 skill 生效。失败时不修改本机配置，修复后重跑原命令。
 
 ## 内容与开发约定
+
+### AGENTS.md 片段
+
+三个片段默认 `auto_sync=true`：
+
+| 片段 | 内容 |
+| --- | --- |
+| [dev-directory](agents-md/dev-directory.md) | 项目位置、conda 环境和启动入口 |
+| [formula-display](agents-md/formula-display.md) | CLI Unicode 与文件 LaTeX 格式 |
+| [simple-dev](agents-md/simple-dev.md) | 直接实现、按实际需求增加复杂度、验证后结束 |
+
+`simple-dev` 提炼自 [Stop That Shit](https://github.com/lennney/stop-that-shit) 的决策原则。片段使用纯 Markdown，无需 Skill frontmatter。
+
+统一的远程 `harness.json` 示例：
+
+```json
+{
+  "agents": ["codex", "github-copilot"],
+  "skills": [
+    { "name": "dev-directory", "source": "Charbddlie/everything-harness", "auto_sync": false, "deleted": true },
+    { "name": "formula-display", "source": "Charbddlie/everything-harness", "auto_sync": false, "deleted": true }
+  ],
+  "fragments": [
+    { "name": "dev-directory", "auto_sync": true },
+    { "name": "formula-display", "auto_sync": true },
+    { "name": "simple-dev", "auto_sync": true }
+  ]
+}
+```
+
+片段记录只有 `name`、`auto_sync` 和可选的 `deleted`，无 `source` 或独立 agents。正文始终读取 eh 远程 `main` 的 `agents-md/<name>.md`；本机开关存放在同一个 `harness.json` 的 `fragments` 数组。
+
+片段沿用 `harness.json` 的生效全局 agents：
+
+| 目标 | 默认指令文件 | 路径覆盖 |
+| --- | --- | --- |
+| Codex | `~/.codex/AGENTS.md` | `$CODEX_HOME/AGENTS.md` |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | `$COPILOT_HOME/copilot-instructions.md` |
+
+每次 sync 原位覆盖同名标记块，新片段按清单顺序追加；块外手写内容保留。标记格式错误时先报错，修复后重试。
+
+```markdown
+<!-- eh:simple-dev:start -->
+片段正文
+<!-- eh:simple-dev:end -->
+```
+
+在远程入口后追加以下参数即可修改开关：
+
+- `--fragments --auto_sync false simple-dev`：改远程默认并 commit / push。
+- `--local --fragments --auto_sync false simple-dev`：只改本机覆盖。
+- `--fragments --del NAME`：删除本机块和仓库中的 `agents-md/<name>.md`，标记远程删除并一并 commit / push。
+- `--local --fragments --del NAME`：删除本机块并保存本机开关为 false。
+- 将 `false` 改为 `true` 即开启，下次 sync 更新正文。
+- `--list` 同时显示 Skill 和片段开关；`--dryrun` 检查选中的片段及已有目标标记。
+
+关闭同步保留已有片段。新增片段时在源码仓库添加 Markdown 和清单记录，发布后运行 sync。
+
+原 `dev-directory` 和 `formula-display` Skill 已删除源码，清单保留删除记录；sync 会提示并清理旧安装，两个同名片段保持开启。
+
+### 删除与改名
+
+Skill 和片段使用相同规则：
+
+- 删除：移除整个自有 `skills/<name>/` 目录或 `agents-md/<name>.md` 文件，仅在 `harness.json` 保留原 entry，设置 `deleted=true`、`auto_sync=false`。第三方来源仓库保持不变，`--local` 保留仓库源码。
+- 已标记删除的条目可再次执行远程删除，以清理残留源码；删除内容可从 Git 历史恢复。
+- 改名：将旧 entry 标记删除，再创建新名称的 entry 并移动正文；Skill 同时更新 frontmatter 的 `name`。
+- Sync 在生效 agents 内提示并删除旧项，再按新 entry 的开关更新新项。删除标记优先于本机开关，记录长期保留。
+- 安装或开关命令不能重新启用已删除名称；清单外内容保持原样。
+
+### Skills
 
 每个 skill 一条记录，无来源类型或版本管理层：
 
@@ -134,10 +208,6 @@ skills/copilot-api/
   dryrun.mjs
   scripts/copilot-api.bat
   scripts/copilot-api.sh
-skills/dev-directory/
-  SKILL.md
-skills/formula-display/
-  SKILL.md
 skills/paper-add/
   SKILL.md
   dryrun.mjs
@@ -151,7 +221,11 @@ skills/zotero-init/
   SKILL.md
 skills/skill-manage/
   SKILL.md
-skills.json
+harness.json
+agents-md/
+  dev-directory.md
+  formula-display.md
+  simple-dev.md
 sync.mjs
 tests/
 AGENTS.md
@@ -161,7 +235,7 @@ AGENTS.md
 
 `copilot-api` 替代原本的 `claude-init`，远程 `auto_sync=true`，默认安装技能说明及启动脚本模板。调用时安装本地网关、引导登录，并按用户选择配置 Claude Code / Codex；安装 skill 本身只检查 Node.js 与 npm，不启动网关或改写客户端配置。Windows 模板使用兼容 GBK 的 ASCII / CRLF，macOS / Linux 模板使用 LF。
 
-`dev-directory` 和 `formula-display` 默认自动安装到生效的 agents。前者约定项目目录、conda 环境和启动入口；后者区分 CLI 的 Unicode 公式与文件中的 LaTeX。两者均为纯说明 skill，无需 dryrun。
+`dev-directory` 和 `formula-display` 的常驻规则通过同名片段同步。
 
 `paper-add`、`paper-read` 和 `zotero-init` 从本机技能迁入。前两者保留 Python 标准库脚本，使用 Windows conda base（`~\miniconda3\python.exe`）；各自的 `dryrun.mjs` 检查 Zotero 路径与凭据，`paper-read` 还检查 MinerU 密钥。`zotero-init` 是初始化说明，不需要检查脚本。`key.env` 不分发，推荐用环境变量提供 `MINERU_API_KEY`；Zotero 凭据支持环境变量或现有 Claude MCP 配置。初始化说明当前针对 Claude Code，跨 agent 安装不自动注册 MCP。
 

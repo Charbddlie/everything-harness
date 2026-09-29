@@ -12,12 +12,14 @@
     {
       "name": "dev-directory",
       "source": "Charbddlie/everything-harness",
-      "auto_sync": true
+      "auto_sync": false,
+      "deleted": true
     },
     {
       "name": "formula-display",
       "source": "Charbddlie/everything-harness",
-      "auto_sync": true
+      "auto_sync": false,
+      "deleted": true
     },
     {
       "name": "paper-add",
@@ -30,6 +32,17 @@
       "auto_sync": false
     },
     {
+      "name": "prune-lore",
+      "source": "Charbddlie/everything-harness",
+      "auto_sync": false,
+      "deleted": true
+    },
+    {
+      "name": "simple-doc",
+      "source": "Charbddlie/everything-harness",
+      "auto_sync": true
+    },
+    {
       "name": "skill-manage",
       "source": "Charbddlie/everything-harness",
       "auto_sync": true
@@ -39,5 +52,10 @@
       "source": "Charbddlie/everything-harness",
       "auto_sync": false
     }
+  ],
+  "fragments": [
+    { "name": "dev-directory", "auto_sync": true },
+    { "name": "formula-display", "auto_sync": true },
+    { "name": "simple-dev", "auto_sync": true }
   ]
 }
