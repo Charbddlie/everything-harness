@@ -193,7 +193,7 @@ test('fragment CLI modifier requires an explicit switch operation', () => {
 
 test('checked-in fragments are all enabled and can render together', () => {
   const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
-  assert.deepEqual(manifest.fragments.map((entry) => entry.name), ['dev-directory', 'formula-display', 'simple-dev']);
+  assert.deepEqual(manifest.fragments.map((entry) => entry.name), ['dev-directory', 'formula-display', 'simple-dev', 'simple-doc', 'instruction']);
   assert.ok(manifest.fragments.every((entry) => entry.auto_sync));
   const contents = manifest.fragments.map(({ name }) => ({ name,
     content: readFileSync(new URL(`../agents-md/${name}.md`, import.meta.url), 'utf8') }));
@@ -304,8 +304,9 @@ test('fragment records reject source, per-fragment agents and invalid deletion f
 
 test('checked-in old skills are tombstones with removed source and active replacement fragments', () => {
   const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
-  for (const name of ['dev-directory', 'formula-display']) {
+  for (const name of ['dev-directory', 'formula-display', 'simple-doc']) {
     assert.equal(manifest.skills.find((item) => item.name === name).deleted, true);
+    assert.equal(manifest.skills.find((item) => item.name === name).auto_sync, false);
     assert.equal(manifest.fragments.find((item) => item.name === name).auto_sync, true);
     assert.ok(!existsSync(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
   }
