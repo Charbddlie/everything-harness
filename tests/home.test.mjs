@@ -36,6 +36,9 @@ test('home overrides content paths and child home while preserving proxies, Git 
   assert.equal(scoped.homeDir, f.destination);
   assert.equal(scoped.stateDir, join(f.destination, '.everything-harness'));
   assert.equal(scoped.sharedSkillsDir, join(f.destination, '.agents', 'skills'));
+  assert.deepEqual(scoped.skillLoadDirs, {
+    codex: join(f.destination, '.codex', 'skills'), 'github-copilot': join(f.destination, '.copilot', 'skills'),
+  });
   assert.equal(scoped.env.CODEX_HOME, join(f.destination, '.codex'));
   assert.equal(scoped.env.COPILOT_HOME, join(f.destination, '.copilot'));
   assert.equal(scoped.env.HOME, f.destination);
@@ -55,6 +58,10 @@ test('home resolves relative and quoted tilde paths and rejects a file before fe
   assert.equal(homeDependencies('~', f.dependencies).homeDir, f.original);
   assert.equal(homeDependencies('~/work', f.dependencies).homeDir, join(f.original, 'work'));
   assert.equal(homeDependencies('~').homeDir, homedir());
+  for (const home of ['~', f.original, join(f.original, '..', 'original')]) {
+    assert.equal(homeDependencies(home, f.dependencies).skillLoadDirs, undefined);
+  }
+  if (process.platform === 'win32') assert.equal(homeDependencies(f.original.toUpperCase(), f.dependencies).skillLoadDirs, undefined);
   const file = join(f.root, 'file'); writeFileSync(file, 'keep');
   assert.throws(() => sync(['--home', file], { fetchManifest: () => assert.fail('Must validate home first') }), /必须是目录/);
   assert.equal(readFileSync(file, 'utf8'), 'keep');
@@ -73,6 +80,23 @@ test('sync, local add and del, and migration all use the selected home', (t) => 
   sync(['--home', f.destination, '--local', '--del', 'agents-md:one'], f.dependencies);
   assert.ok(targets.every((path) => !readFileSync(path, 'utf8').includes('eh:one:')));
   assert.ok(!existsSync(f.original));
+});
+
+test('explicit user home still writes instruction fragments to both agent directories', (t) => {
+  const f = fixture(t);
+  for (const home of ['~', f.original]) {
+    sync(['--home', home], f.dependencies);
+    for (const path of [
+      join(f.original, '.codex', 'AGENTS.md'),
+      join(f.original, '.copilot', 'copilot-instructions.md'),
+    ]) {
+      const content = readFileSync(path, 'utf8');
+      assert.ok(content.includes('Rule'));
+      assert.equal(content.split('<!-- eh:one:start -->').length, 2);
+    }
+  }
+  assert.ok(!existsSync(join(f.original, '.codex', 'skills')));
+  assert.ok(!existsSync(join(f.original, '.copilot', 'skills')));
 });
 
 test('list and dryrun do not create the requested home', (t) => {

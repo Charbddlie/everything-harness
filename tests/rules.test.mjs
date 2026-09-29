@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -351,6 +352,99 @@ test('preflight stages source in a temporary project, tests all skills and clean
   assert.ok(logs.some((line) => line.includes('failure-zotero')));
   assert.ok(paths.every((path) => !existsSync(path)));
   assert.deepEqual(readdirSync(f.root), []);
+});
+
+for (const blockedType of ['file', 'directory']) for (const failCheck of [false, true]) {
+  test(`preflight reports the exact blocked ${blockedType} and preserves check failure=${failCheck}`, (t) => {
+    const f = fixture(t);
+    let blocked, root;
+    const primary = new Error('original dryrun failure');
+    const cleanup = Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
+    const dependencies = {
+      tempDir: f.root,
+      createCheckRunner: ({ cwd }) => {
+        root = cwd;
+        const path = join(cwd, '.agents', 'skills', 'core');
+        const file = join(path, 'SKILL.md');
+        put(file, 'fixture');
+        blocked = blockedType === 'file' ? file : path;
+        return () => JSON.stringify([{ name: 'core', status: 'installed', scope: 'project', path, agents: ['Codex'] }]);
+      },
+      runDryruns: () => { if (failCheck) throw primary; },
+    };
+    const originalRemove = fs.rmSync;
+    const mock = t.mock.method(fs, 'rmSync', (path, options) => {
+      if (path === blocked) {
+        assert.equal(options.maxRetries, 3);
+        assert.equal(options.retryDelay, 100);
+        cleanup.path = root;
+        throw cleanup;
+      }
+      return originalRemove(path, options);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => checkSkills([skill('core')], ['codex'], dependencies, () => {}), (error) => {
+        assert.ok(error.message.includes(`临时目录清理失败：${blocked}；`));
+        assert.ok(error.message.includes('EPERM'));
+        if (failCheck) {
+          assert.ok(error.message.includes(primary.message));
+          assert.deepEqual(error.errors, [primary, cleanup]);
+        } else assert.equal(error.cause, cleanup);
+        return true;
+      });
+      assert.ok(existsSync(blocked));
+    } finally {
+      mock.mock.restore();
+      syncBuiltinESMExports();
+    }
+  });
+}
+
+test('preflight cleanup removes directory links without touching their targets', (t) => {
+  const f = fixture(t);
+  const target = join(f.root, 'outside');
+  put(join(target, 'keep.txt'), 'keep');
+  let root;
+  checkSkills([skill('core')], ['codex'], {
+    tempDir: f.root,
+    createCheckRunner: ({ cwd }) => {
+      root = cwd;
+      symlinkSync(target, join(cwd, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+      return () => JSON.stringify([{ name: 'core', status: 'installed', scope: 'project', path: target, agents: ['Codex'] }]);
+    },
+    runDryruns: () => {},
+  }, () => {});
+  assert.ok(!existsSync(root));
+  assert.equal(readFileSync(join(target, 'keep.txt'), 'utf8'), 'keep');
+});
+
+test('remote checkout cleanup reports the blocked file without masking the Git error', (t) => {
+  const f = fixture(t);
+  let blocked;
+  f.dependencies.tempDir = f.root;
+  f.dependencies.runGit = (command, args, { cwd }) => {
+    blocked = join(cwd, '.git', 'index.lock');
+    put(blocked, 'fixture');
+    throw new Error('original Git failure');
+  };
+  const originalRemove = fs.rmSync;
+  const mock = t.mock.method(fs, 'rmSync', (path, options) => {
+    if (path === blocked) throw Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
+    return originalRemove(path, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => f.run(['--add_agents', 'codex']), (error) => {
+      assert.ok(error.message.includes('original Git failure'));
+      assert.ok(error.message.includes('重新运行同一条命令'));
+      assert.ok(error.message.includes(`临时目录清理失败：${blocked}；`));
+      return true;
+    });
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('source conflicts, test failures and concurrent settings edits preserve local configuration', (t) => {

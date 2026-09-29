@@ -42,7 +42,9 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 `--home <目录>` 指定本次同步的根目录，默认用户主目录 `~`。传入后，skill、指令和本机配置分别使用该目录下的 `.agents`、`.codex`、`.copilot`、`.everything-harness`；显式目录优先于 `CODEX_HOME`、`COPILOT_HOME`。相对路径按启动目录解析，安装和检查子进程使用同一主目录。Git 发布沿用原环境的提交身份与认证。
 
-指定 `--home` 后，skills 在 `<home>/.agents/skills` 下载和维护共享正文，sync 再为生效 agents 建立 `<home>/.codex/skills/<name>`、`<home>/.copilot/skills/<name>` 加载入口。方式跟随 CLI 实际返回的 `mode`：copy 复制完整内容，symlink 建立相对软链接；链接失败时回退复制。更新会替换选中的入口，删除会清理对应入口；共享正文与来源锁仍由 skills 管理，其他 skill 和未选中 agent 的入口保留。整体移动 home 后，相对链接和实体副本仍可使用。未指定 `--home` 时沿用 skills 的原有安装方式。
+指定 `--home` 后，skills 在 `<home>/.agents/skills` 下载和维护共享正文。仅当规范化后的 home 不同于用户主目录时，sync 才为生效 agents 额外建立 `<home>/.codex/skills/<name>`、`<home>/.copilot/skills/<name>` 加载入口。方式跟随 CLI 实际返回的 `mode`：copy 复制完整内容，symlink 建立相对软链接；链接失败时回退复制。更新会替换选中的入口，删除会清理对应入口；共享正文与来源锁仍由 skills 管理，其他 skill 和未选中 agent 的入口保留。整体移动 home 后，相对链接和实体副本仍可使用。未指定 `--home`、指定 `--home ~` 或用户主目录的等价绝对路径时，沿用 skills 的原有安装方式，sync 不额外创建软链接或复制，也不自动迁移或删除已有入口。
+
+以上限制仅针对 skill 加载入口。显式指定 `--home` 时，`agents-md` 仍按生效 agents 写入 `<home>/.codex/AGENTS.md` 和 `<home>/.copilot/copilot-instructions.md`，包括 `home=~`。
 
 当已确认当前工作目录就是同步根目录时，可使用以下写法自动将所在文件夹传给 `--home`；其他位置使用已确认的绝对根目录。
 
@@ -104,6 +106,8 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 测试前通过 `npx skills` 在临时项目准备源码，测试全部通过后才覆盖正式安装并写入片段；临时项目随后清理。测试失败时保留本批正式安装和原配置，继续检查后续规则并汇总错误。Skill 测试仅检查环境与配置，业务操作、用户文件上传和计费 API 调用排除在检查范围外。纯说明 skill 可没有 dryrun；自有 skill 包含脚本时必须提供 dryrun，第三方存在此入口时同样执行。
 
+临时项目和 Git 临时副本逐项清理，删除遇到文件占用等可重试错误时最多重试 3 次。仍失败时显示具体文件或子目录的完整路径及系统错误；若安装、检查或 Git 操作也失败，会同时保留原始错误。可根据路径排查占用或权限，修复后重新运行同一条命令。
+
 ## 删除与配置
 
 - `--del skill:NAME`、`--del agents-md:NAME`：删除指定内容，可一次传多个名称。
@@ -125,6 +129,6 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 旧 `skills` / `skill`、`fragments` / `agents-md` 中的 `auto_sync` 迁为规则成员覆盖：true 优先沿用远程所属规则，未分组内容进入 auto；false 从生效规则移除。新文件缺失时迁入旧 `skills.json`、`agents-md.json`，保留原文件作备份，忽略旧 skill 级 agents。新文件存在后以新文件为准。列表和预检只读取迁移结果，同步或本机操作成功后保存新配置。新旧字段有歧义时先合并再重试。
 
-空 agents 暂停 sync 和预检，显式安装、删除需先设置目标。共享正文及锁文件由 skills 管理，显式 home 的 agent 加载入口由 sync 接入，保留已有父目录软链接。片段按 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 原位覆盖，保留标记外内容、未选中块和目标文件软链接。
+空 agents 暂停 sync 和预检，显式安装、删除需先设置目标。共享正文及锁文件由 skills 管理，非用户主目录的显式 home 的 agent 加载入口由 sync 接入，保留已有父目录软链接。片段按 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 原位覆盖，保留标记外内容、未选中块和目标文件软链接。
 
 远程管理在临时副本中完成 Git 操作，保持用户工作区原状。失败时保留已完成的本机操作；commit / push 失败保留操作副本并提示重试。删除后的源码可从 Git 历史恢复。发布源码时只迁入说明、脚本和必要资源，凭据、缓存和本机配置放在安装目录之外。

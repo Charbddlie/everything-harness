@@ -8,7 +8,7 @@
 - `--add` 接收一个或两个参数：单参数为 `type:name`，其中自有 skill 默认来源为 `Charbddlie/everything-harness`；双参数为 `owner/repo skill:name`。`agents-md:name` 和 `rule:name` 使用单参数。`--del` 可接收多个类型名称。`--add_agents`、`--del_agents` 沿用 agent 名称。
 - 每个同步规则在 `sync.mjs` 注册回调。`auto` 无额外条件，`win` 检测 Windows，`learn` 检测 Windows 和显式调用。检测函数集中复用，规则成员禁止嵌套规则。普通 sync 按清单顺序走同一个 `--add rule:name` 规划与执行入口，调用上下文标记为非显式。
 - 顶层 `agents` 统一设置所有 skill 和片段的目标，支持 `codex`、`github-copilot`，默认包含两者。
-- 本机配置位于 `~/.everything-harness/harness.json`，保存 `sync-rules` 成员覆盖和可选的顶层 `agents`；每个本机规则整份覆盖同名远程规则。Skill 共享正文由 skills 放在 `.agents/skills`；指定 `--home` 时，sync 另在该目录的 `.codex/skills`、`.copilot/skills` 中为生效 agents 接入选中内容。片段写入 `${CODEX_HOME:-~/.codex}/AGENTS.md` 或 `${COPILOT_HOME:-~/.copilot}/copilot-instructions.md`。
+- 本机配置位于 `~/.everything-harness/harness.json`，保存 `sync-rules` 成员覆盖和可选的顶层 `agents`；每个本机规则整份覆盖同名远程规则。Skill 共享正文由 skills 放在 `.agents/skills`；指定 `--home` 且规范化路径不同于用户主目录时，sync 另在该目录的 `.codex/skills`、`.copilot/skills` 中为生效 agents 接入选中内容。用户主目录不额外创建链接或副本，不自动清理已有入口。片段写入 `${CODEX_HOME:-~/.codex}/AGENTS.md` 或 `${COPILOT_HOME:-~/.copilot}/copilot-instructions.md`。
 - `--home <目录>` 覆盖本次内容根目录，默认用户主目录。显式目录优先于 agent 目录环境变量，统一控制 `.agents`、`.codex`、`.copilot`、`.everything-harness` 及安装和检查子进程的主目录；相对路径按启动目录解析，Git 发布沿用原身份与认证环境。
 - 片段标记统一使用 `<!-- eh:<name>:start -->` / `<!-- eh:<name>:end -->`。
 
@@ -18,7 +18,7 @@
 
 ## 项目的开发原则
 
-- 保持轻量、简单、易读。仓库维护个人 skill 内容和清单；下载、共享正文安装与覆盖、锁文件交给 `npx skills` 管理。显式 `--home` 的 agent 加载入口由 sync 按 CLI 返回的 `mode` 接入：copy 使用实体副本，symlink 使用相对软链接，链接失败时回退复制。仅处理本次选中 skill 和生效 agents，保留其他内容及已有父目录软链接。功能范围保持在内容维护与同步，不扩展 TUI、安装数据库、通用链接管理、来源分类、通配符或版本管理系统。
+- 保持轻量、简单、易读。仓库维护个人 skill 内容和清单；下载、共享正文安装与覆盖、锁文件交给 `npx skills` 管理。非用户主目录的显式 `--home` 的 agent 加载入口由 sync 按 CLI 返回的 `mode` 接入：copy 使用实体副本，symlink 使用相对软链接，链接失败时回退复制。仅处理本次选中 skill 和生效 agents，保留其他内容及已有父目录软链接。功能范围保持在内容维护与同步，不扩展 TUI、安装数据库、通用链接管理、来源分类、通配符或版本管理系统。
 - 内容发布流程为：修改本地仓库 → commit / push 到远程 → 运行 sync → 单向覆盖本机安装内容。检测通过的内容以远程正文覆盖，本机 JSON 保存规则成员与目标选择。
 - `sync.mjs` 是唯一同步入口，使用 Node.js 内置模块，通过系统的 `npx skills` 运行 CLI。所有入口读取远程 main 清单，安装和删除使用生效的全局 agents；面向用户提供远程入口。
 - 完整校验清单后执行规则。调用顺序为规则回调 → 检测函数 → 所有相关 skill 的 dryrun → 批量安装。规则条件未满足时跳过该规则；测试失败时保留该批正式安装，汇总错误并继续检查后续规则。添加单条内容复用相同测试与安装执行器。按来源分组安装，子进程使用结构化参数，保留清单外内容。

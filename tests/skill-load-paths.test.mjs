@@ -105,6 +105,32 @@ test('home-scoped deletion clears selected native endpoints while the CLI retain
   assert.deepEqual(JSON.parse(readFileSync(join(f.home, '.everything-harness', 'harness.json')))['sync-rules'].auto, []);
 });
 
+for (const mode of ['copy', 'symlink']) {
+  test(`user home sync does not add ${mode} endpoints or replace existing ones`, (t) => {
+    const f = fixture(t);
+    const manifest = { agents: ['codex', 'github-copilot'], skill: [{ name: 'one', source: 'example/repo' }],
+      'sync-rules': { auto: [{ type_name: 'skill:one' }] } };
+    let installs = 0;
+    const dependencies = {
+      homeDir: f.home, env: {}, fetchManifest: () => JSON.stringify(manifest), log() {}, checkSkills() {},
+      runSkills: (args) => {
+        if (args[0] === 'list') return '[]';
+        assert.equal(args[0], 'add');
+        installs++;
+        return JSON.stringify([{ ...f.result, mode, status: 'installed', scope: 'global', agents: ['Codex', 'GitHub Copilot'] }]);
+      },
+    };
+    sync(['--home', '~'], dependencies);
+    assert.equal(installs, 1);
+    assert.ok(f.dirs.every((dir) => !existsSync(dir)));
+    for (const dir of f.dirs) put(join(dir, 'one', 'SKILL.md'), 'Existing entry');
+    sync(['--home', f.home], dependencies);
+    assert.equal(installs, 2);
+    assert.ok(f.dirs.every((dir) => readFileSync(join(dir, 'one', 'SKILL.md'), 'utf8') === 'Existing entry'));
+    assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), 'Version one');
+  });
+}
+
 test('source conflict and CLI failure preserve the native entries and local settings', (t) => {
   const f = fixture(t); exposeSkill(f.result, f.dirs, { log() {} });
   const manifest = { agents: ['codex'], skill: [{ name: 'one', source: 'example/repo' }] };

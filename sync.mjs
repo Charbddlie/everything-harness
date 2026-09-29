@@ -144,7 +144,8 @@ export function homeDependencies(home, dependencies = {}) {
   });
   return { ...dependencies, env, gitEnv: dependencies.gitEnv ?? baseEnv, homeDir,
     stateDir: join(homeDir, '.everything-harness'), sharedSkillsDir: join(homeDir, '.agents', 'skills'),
-    skillLoadDirs: { codex: join(homeDir, '.codex', 'skills'), 'github-copilot': join(homeDir, '.copilot', 'skills') } };
+    skillLoadDirs: relative(originalHome, homeDir) === '' ? undefined
+      : { codex: join(homeDir, '.codex', 'skills'), 'github-copilot': join(homeDir, '.copilot', 'skills') } };
 }
 
 function objectKeys(value, keys, label) {
@@ -681,17 +682,42 @@ export function changeManifest(manifest, options) {
   return { next: validateManifest(next), affected, plans };
 }
 
+function cleanupTemporaryDirectory(root, operationError) {
+  let failedPath = root;
+  const remove = (path) => {
+    failedPath = path;
+    const entry = lstatSync(path, { throwIfNoEntry: false });
+    if (!entry) return;
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      for (const name of readdirSync(path)) remove(join(path, name));
+    }
+    failedPath = path;
+    // Delete each entry separately: native recursive removal can report only the root.
+    rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  };
+  try { remove(root); }
+  catch (error) {
+    const message = `临时目录清理失败：${failedPath}；${error.message}`;
+    if (operationError) throw new AggregateError([operationError, error], `${operationError.message}\n${message}`);
+    throw new Error(message, { cause: error });
+  }
+}
+
 // Stage the selected source using the same CLI in a disposable project. Tests
 // run before any global install so a failed batch leaves live content intact.
 export function checkSkills(entries, agents, dependencies, log) {
   if (!entries.length) return;
   const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'eh-check-'));
+  let operationError;
   try {
     const installed = new Map();
     const runSkills = (dependencies.createCheckRunner ?? createSkillsRunner)({ env: dependencies.env, cwd: root });
     install(entries, { runSkills, installed, agents, log, scope: 'project' });
     (dependencies.runDryruns ?? runDryruns)(entries, installed, { log, env: dependencies.env });
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } catch (error) {
+    operationError = error;
+    throw error;
+  } finally { cleanupTemporaryDirectory(root, operationError); }
 }
 
 function executePlans(plans, options, agents, dependencies, log) {
@@ -731,6 +757,7 @@ function manageManifest(options, dependencies, log) {
     GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' };
   const git = (args) => (dependencies.runGit ?? runCommand)('git', args, { cwd: root, env, timeout: 120_000 });
   let keep = false;
+  let operationError;
   try {
     log('正在准备远程清单…');
     // A fresh checkout isolates publication from any user working tree.
@@ -757,9 +784,10 @@ function manageManifest(options, dependencies, log) {
     applyManifestChange(options, dependencies, log, root, git, before, sources, () => { keep = true; });
     keep = false;
   } catch (error) {
-    throw new Error(`${error.message}${keep ? `\n操作副本已保留：${root}` : ''}\n修复问题后重新运行同一条命令，脚本会自动重新读取清单并处理 Git。`);
+    operationError = new Error(`${error.message}${keep ? `\n操作副本已保留：${root}` : ''}\n修复问题后重新运行同一条命令，脚本会自动重新读取清单并处理 Git。`, { cause: error });
+    throw operationError;
   } finally {
-    if (!keep) rmSync(root, { recursive: true, force: true });
+    if (!keep) cleanupTemporaryDirectory(root, operationError);
   }
 }
 
