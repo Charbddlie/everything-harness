@@ -26,7 +26,7 @@
     }
   ],
   "agents-md": [
-    { "name": "win-dir" },
+    { "name": "win-dev" },
     { "name": "formula-display" },
     { "name": "simple-dev" },
     { "name": "simple-doc" },
@@ -42,7 +42,7 @@
       { "type_name": "agents-md:instruction" }
     ],
     "win": [
-      { "type_name": "agents-md:win-dir" }
+      { "type_name": "agents-md:win-dev" }
     ],
     "learn": [
       { "type_name": "skill:paper-add" },
@@ -55,6 +55,7 @@
     { "type_name": "skill:formula-display", "source": "Charbddlie/everything-harness" },
     { "type_name": "skill:prune-lore", "source": "Charbddlie/everything-harness" },
     { "type_name": "skill:simple-doc", "source": "Charbddlie/everything-harness" },
-    { "type_name": "agents-md:dev-directory" }
+    { "type_name": "agents-md:dev-directory" },
+    { "type_name": "agents-md:win-dir" }
   ]
 }

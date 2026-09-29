@@ -13,8 +13,8 @@ const put = (path, value) => { mkdirSync(dirname(path), { recursive: true }); wr
 function fixture(t, manifest = {
   agents: ['codex', 'github-copilot'],
   skill: [skill('core'), skill('paper'), skill('zotero'), skill('unused')],
-  'agents-md': [{ name: 'base' }, { name: 'win-dir' }],
-  'sync-rules': { auto: [member('skill:core'), member('agents-md:base')], win: [member('agents-md:win-dir')], learn: [member('skill:paper'), member('skill:zotero')] },
+  'agents-md': [{ name: 'base' }, { name: 'win-dev' }],
+  'sync-rules': { auto: [member('skill:core'), member('agents-md:base')], win: [member('agents-md:win-dev')], learn: [member('skill:paper'), member('skill:zotero')] },
 }) {
   const root = mkdtempSync(join(tmpdir(), 'eh-rules-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -51,7 +51,7 @@ test('add accepts exactly one typed name or a source plus a typed skill name', (
   for (const prefix of [[], ['--local']]) {
     assert.equal(parseArgs([...prefix, '--add', 'skill:paper-read']).source, OWN_SOURCE);
     assert.equal(parseArgs([...prefix, '--add', 'other/repo', 'skill:paper-read']).source, 'other/repo');
-    for (const name of ['agents-md:win-dir', 'rule:learn']) assert.equal(parseArgs([...prefix, '--add', name]).source, undefined);
+    for (const name of ['agents-md:win-dev', 'rule:learn']) assert.equal(parseArgs([...prefix, '--add', name]).source, undefined);
     for (const args of [[], ['one'], ['skill:a', 'skill:b'], ['a/b', 'skill:a', 'skill:b'], ['a/b', 'rule:learn'], ['a/b', 'agents-md:one'], ['skill:../escape'], ['a/b', 'a']]) {
       assert.throws(() => parseArgs([...prefix, '--add', ...args]));
     }
@@ -75,13 +75,40 @@ test('catalog content rejects auto_sync and validates every rule reference and c
   assert.throws(() => validateManifest({ 'sync-rules': { learn: [member('rule:auto')] } }, { local: true }));
 });
 
-test('checked-in rules assign paper and Zotero to learn and win-dir to win', () => {
+test('checked-in rules assign paper and Zotero to learn and win-dev to win', () => {
   const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
   assert.deepEqual(manifest['sync-rules'].learn, ['paper-add', 'paper-read', 'zotero-init'].map((name) => member(`skill:${name}`)));
-  assert.deepEqual(manifest['sync-rules'].win, [member('agents-md:win-dir')]);
+  assert.deepEqual(manifest['sync-rules'].win, [member('agents-md:win-dev')]);
   assert.ok(manifest['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:skill-manage'));
   assert.ok([...manifest.skill, ...manifest['agents-md']].every((entry) => !Object.hasOwn(entry, 'auto_sync')));
 });
+
+for (const platform of ['linux', 'win32']) {
+  test(`win-dev rename cleans old win-dir blocks and follows the win rule on ${platform}`, (t) => {
+    const manifest = JSON.parse(readFileSync(new URL('../harness.json', import.meta.url)));
+    assert.ok(manifest.deleted.some(({ type_name }) => type_name === 'agents-md:win-dir'));
+    assert.ok(!manifest['agents-md'].some(({ name }) => name === 'win-dir'));
+    assert.ok(!existsSync(new URL('../agents-md/win-dir.md', import.meta.url)));
+    const f = fixture(t, manifest);
+    f.dependencies.platform = platform;
+    const reads = [];
+    f.dependencies.fetchFragment = (name) => {
+      reads.push(name);
+      return readFileSync(new URL(`../agents-md/${name}.md`, import.meta.url), 'utf8');
+    };
+    put(f.target, `Personal\n${block('win-dir', 'Old rule')}\n${block('unmanaged', 'Keep')}\n`);
+    put(f.settings, JSON.stringify({ 'sync-rules': { auto: [member('agents-md:win-dir')] } }));
+    f.run();
+    const content = readFileSync(f.target, 'utf8');
+    assert.ok(content.startsWith('Personal\n'));
+    assert.ok(content.includes(block('unmanaged', 'Keep')));
+    assert.ok(!content.includes('eh:win-dir:'));
+    assert.ok(!reads.includes('win-dir'));
+    assert.equal(content.includes('eh:win-dev:'), platform === 'win32');
+    f.run();
+    assert.equal(readFileSync(f.target, 'utf8'), content);
+  });
+}
 
 for (const platform of ['linux', 'darwin', 'win32']) {
   test(`ordinary sync invokes all callbacks on ${platform} and never implicitly enables learn`, (t) => {
@@ -90,7 +117,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
     assert.deepEqual([...f.installed.keys()], ['core']);
     assert.ok(f.events.includes('test:core'));
     assert.ok(!f.events.includes('test:paper'));
-    assert.equal(readFileSync(f.target, 'utf8').includes('eh:win-dir:'), platform === 'win32');
+    assert.equal(readFileSync(f.target, 'utf8').includes('eh:win-dev:'), platform === 'win32');
     assert.deepEqual(f.read(), { 'sync-rules': {} });
   });
   test(`explicit learn add on ${platform} requires Windows and tests all members before adding`, (t) => {
@@ -163,7 +190,7 @@ test('sync continues through all rules after a failure and reports the aggregate
   f.dependencies.checkSkills = (entries) => { if (entries.length) throw new Error('core failure'); };
   assert.throws(() => f.run(), /auto: core failure/);
   assert.ok(f.events.includes('规则回调：rule:learn'));
-  assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dir:'));
+  assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:'));
   assert.ok(!existsSync(f.settings));
 });
 

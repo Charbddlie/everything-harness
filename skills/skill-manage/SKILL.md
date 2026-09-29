@@ -56,7 +56,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 ```text
 --add skill:skill-manage
 --add owner/repo skill:example
---add agents-md:win-dir
+--add agents-md:win-dev
 --add rule:learn
 --local --add rule:learn
 ```
@@ -78,7 +78,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 | 规则 | 条件 | 当前成员 |
 | --- | --- | --- |
 | `auto` | 无额外条件 | copilot-api、skill-manage 与通用片段 |
-| `win` | Windows | win-dir |
+| `win` | Windows | win-dev |
 | `learn` | Windows 且通过 add 显式调用 | paper-add、paper-read、zotero-init |
 
 规则回调在 `sync.mjs` 注册，复用 Windows 和显式调用检测函数。规则成员只引用活动 skill 或片段，不能嵌套规则。
