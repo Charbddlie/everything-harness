@@ -45,9 +45,13 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
     assert.ok(!existsSync(join(home, agent, 'skills', 'one', 'stale.txt')));
   }
   put(join(source, 'dryrun.mjs'), 'console.error("Missing fixture setting"); process.exitCode=1;');
+  put(join(source, 'SKILL.md'), skillText('one', 'Version three'));
   git(['add', '.']); git(['commit', '--quiet', '-m', 'Fail preflight']);
-  assert.throws(() => run(), /环境检查失败/);
+  assert.throws(() => run(['--dryrun']), /环境检查失败/);
   assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version two/);
+  run();
+  assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version three/);
+  assert.ok(logs.some((line) => line.startsWith('[警告]')));
   run(['--local', '--del', 'skill:one']);
   assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
   assert.ok(!readdirSync(root).some((name) => name.startsWith('eh-check-')));

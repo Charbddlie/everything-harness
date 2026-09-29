@@ -202,7 +202,7 @@ test('rule deletion bypasses callbacks and tests and local add restores the comp
   assert.equal(f.manifest['sync-rules'].learn.length, 2);
 });
 
-test('a failed skill test leaves the entire group and local settings untouched', (t) => {
+test('a preflight execution error leaves the entire group and local settings untouched', (t) => {
   const f = fixture(t); f.dependencies.platform = 'win32';
   put(f.settings, '{"sync-rules":{}}');
   f.dependencies.runDryruns = (entries) => {

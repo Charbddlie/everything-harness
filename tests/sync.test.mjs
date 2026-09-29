@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { OWN_SOURCE, findSkill, parseArgs, runCommand, runDryruns, sync, validateManifest } from '../sync.mjs';
+import { OWN_SOURCE, createProgressLogger, findSkill, parseArgs, runCommand, runDryruns, sync, validateManifest } from '../sync.mjs';
 
 const agents = ['codex', 'github-copilot'];
 const entry = (name, source = 'example/skills') => ({ name, source });
@@ -18,7 +18,7 @@ function fixture(t, manifest = { agents, skill: [entry('one'), entry('two')], 's
   const home = join(root, 'home'), tempDir = join(root, 'operations'); mkdirSync(tempDir);
   const logs = [], downloads = [];
   const dependencies = {
-    homeDir: home, tempDir, log: (line) => logs.push(line),
+    homeDir: home, tempDir, env: {}, log: (line) => logs.push(line),
     fetchManifest: () => JSON.stringify(manifest),
     fetchFragment: () => 'Instructions',
     fetchRepository: (source, path) => {
@@ -86,8 +86,10 @@ test('list and dryrun preserve installed content and settings', (t) => {
   assert.ok(existsSync(join(f.shared('one'), 'local.txt')));
 });
 
-test('a failed batch checks all dryruns and preserves every installed skill', (t) => {
+test('failed skill checks preserve content in dryrun but only warn during sync and local add', (t) => {
   const f = fixture(t); f.run();
+  f.manifest['agents-md'] = [{ name: 'base' }];
+  f.manifest['sync-rules'].auto.push({ type_name: 'agents-md:base' });
   f.dependencies.fetchRepository = (source, path) => {
     for (const name of ['one', 'two']) {
       put(join(path, 'skills', name, 'SKILL.md'), text(name, 'Version two'));
@@ -95,10 +97,49 @@ test('a failed batch checks all dryruns and preserves every installed skill', (t
     }
   };
   const before = readFileSync(f.settings, 'utf8');
-  assert.throws(() => f.run(), /2 个 skill/);
+  assert.throws(() => f.run(['--dryrun']), /2 个 skill/);
   assert.ok(['one', 'two'].every((name) => f.logs.some((line) => line.includes(`failure-${name}`))));
   for (const name of ['one', 'two']) assert.match(readFileSync(join(f.shared(name), 'SKILL.md'), 'utf8'), /Version one/);
   assert.equal(readFileSync(f.settings, 'utf8'), before);
+  assert.ok(!existsSync(join(f.home, '.codex', 'AGENTS.md')));
+  f.run();
+  for (const name of ['one', 'two']) assert.match(readFileSync(join(f.shared(name), 'SKILL.md'), 'utf8'), /Version two/);
+  assert.ok(f.logs.some((line) => line.startsWith('[警告] 2 个 skill')));
+  assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
+  put(f.settings, '{"sync-rules":{"auto":[]}}');
+  f.run(['--local', '--add', 'example/skills', 'skill:one']);
+  assert.ok(JSON.parse(readFileSync(f.settings))['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:one'));
+});
+
+test('invalid skill structure still blocks normal synchronization', (t) => {
+  const f = fixture(t); f.run();
+  f.dependencies.fetchRepository = (source, path) => put(join(path, 'skills', 'one', 'SKILL.md'), 'Invalid metadata');
+  assert.throws(() => f.run(), /SKILL.md/);
+  assert.match(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), /Version one/);
+});
+
+test('progress output numbers actual stages and labels warnings without hiding application', (t) => {
+  const f = fixture(t);
+  f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
+  f.dependencies.fetchRepository = (source, path) => {
+    for (const name of ['one', 'two']) {
+      put(join(path, 'skills', name, 'SKILL.md'), text(name));
+      put(join(path, 'skills', name, 'dryrun.mjs'), 'console.error("Missing setting"); process.exitCode=1;');
+    }
+  };
+  f.run();
+  const stages = f.logs.map((line) => line.trim().match(/^(\d+)\. (.+)$/)).filter(Boolean);
+  assert.deepEqual(stages.map((match) => Number(match[1])), stages.map((_, index) => index + 1));
+  for (const title of ['下载 skill 源码', '检查 skill 环境', '应用 skill 到目标目录', '清理临时目录']) {
+    assert.ok(stages.some((match) => match[2] === title), title);
+  }
+  assert.ok(f.logs.some((line) => line.includes('[警告] [one] 失败')));
+  assert.ok(f.logs.some((line) => line.includes('[通过] 覆盖安装')));
+  assert.ok(f.logs.at(-1).startsWith('  [完成]'));
+  f.logs.length = 0;
+  assert.throws(() => f.run(['--dryrun']), /环境检查失败/);
+  assert.ok(f.logs.some((line) => line.includes('[失败] [one]')));
+  assert.ok(!f.logs.some((line) => line.includes('应用 skill 到目标目录')));
 });
 
 test('download failures preserve content and never report a completed sync', (t) => {
@@ -182,7 +223,8 @@ test('own script-bearing skills require dryrun and every failure is reported', (
 function remoteFixture(t, manifest = { agents, skill: [entry('one', OWN_SOURCE)] }) {
   const f = fixture(t, manifest), repository = join(f.root, 'repository'), remote = join(f.root, 'remote.git');
   mkdirSync(repository);
-  const env = { ...process.env, GIT_AUTHOR_NAME: 'Skill Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+  const env = { ...process.env, CODEX_HOME: join(f.home, '.codex'), COPILOT_HOME: join(f.home, '.copilot'),
+    GIT_AUTHOR_NAME: 'Skill Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
     GIT_COMMITTER_NAME: 'Skill Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'false',
     GIT_CONFIG_KEY_1: 'core.hooksPath', GIT_CONFIG_VALUE_1: join(f.root, 'no-hooks') };
@@ -199,16 +241,24 @@ function remoteFixture(t, manifest = { agents, skill: [entry('one', OWN_SOURCE)]
     remoteManifest: () => JSON.parse(runCommand('git', ['--git-dir', remote, 'show', 'main:harness.json'])) };
 }
 
-test('remote add checks and installs before publishing without changing a dirty user checkout', (t) => {
+test('remote add applies failed-check content before publishing without changing a dirty user checkout', (t) => {
   const f = remoteFixture(t), events = [];
   put(join(f.repository, 'unrelated.txt'), 'Keep'); f.git(['add', 'unrelated.txt']);
-  f.dependencies.runDryruns = () => { events.push('dryrun'); assert.equal(f.remoteManifest().skill.length, 1); };
+  f.dependencies.fetchRepository = (source, path) => {
+    put(join(path, 'skills', 'two', 'SKILL.md'), text('two'));
+    put(join(path, 'skills', 'two', 'dryrun.mjs'), 'console.error("missing test setting"); process.exitCode=1;');
+  };
+  f.dependencies.runDryruns = (...args) => {
+    events.push('dryrun'); assert.equal(f.remoteManifest().skill.length, 1);
+    return runDryruns(...args);
+  };
   f.dependencies.runGit = (command, args, options) => {
     if (args[0] === 'commit') { events.push('commit'); assert.ok(existsSync(f.shared('two'))); }
     return runCommand(command, args, options);
   };
   f.run(['--add', 'example/skills', 'skill:two']);
   assert.deepEqual(events, ['dryrun', 'commit']);
+  assert.ok(f.logs.some((line) => line.startsWith('[警告]')));
   assert.equal(f.remoteManifest().skill.length, 2);
   assert.equal(f.git(['diff', '--cached', '--name-only']).trim(), 'unrelated.txt');
   assert.equal(JSON.parse(readFileSync(join(f.repository, 'harness.json'))).skill.length, 1);
