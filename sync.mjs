@@ -8,22 +8,54 @@ export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/harness.json`;
 export const AGENTS = new Map([['codex', 'Codex'], ['github-copilot', 'GitHub Copilot']]);
 const USAGE = `node sync.mjs [--dryrun | --list]
-node sync.mjs --add <owner/repo> <skill> ...
-node sync.mjs --del <skill> ...
-node sync.mjs --auto_sync <true|false> <skill> ...
+node sync.mjs [--local] --add <type>:<name>
+node sync.mjs [--local] --add <owner>/<repo> skill:<name>
+node sync.mjs [--local] --del <type>:<name> ...
+node sync.mjs [--local] --auto_sync <true|false> <type>:<name> ...
 node sync.mjs [--local] --add_agents <agent> ...
 node sync.mjs [--local] --del_agents <agent> ...
-node sync.mjs --local --add <skill> ...
-node sync.mjs --local --del <skill> ...
-node sync.mjs --local --auto_sync <true|false> <skill> ...
-node sync.mjs [--local] --fragments --auto_sync <true|false> <fragment> ...
-node sync.mjs [--local] --fragments --del <fragment> ...`;
+type: skill | agents-md | rule
+--add 接收一个或两个参数；自有 skill 单参数默认来源为 ${OWN_SOURCE}。`;
 
 function check(condition, message) { if (!condition) throw new Error(message); }
 
 function skillName(name) {
   check(typeof name === 'string' && name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name), `无效 skill 名：${name}`);
 }
+
+export function typedName(value, { rule = false } = {}) {
+  check(typeof value === 'string' && /^(skill|agents-md|rule):[^:]+$/.test(value), `无效名称：${value}；请使用 type:name。`);
+  const [type, name] = value.split(':');
+  check(type !== 'rule' || rule, '规则成员和删除记录只能使用 skill: 或 agents-md: 前缀。');
+  skillName(name);
+  return { type, name };
+}
+
+const deletedEntries = (manifest, type) => (manifest.deleted ?? []).map(({ type_name, ...entry }) => ({ ...entry, ...typedName(type_name) }))
+  .filter((entry) => entry.type === type).map((entry) => ({ ...entry, deleted: true }));
+
+export const RULE_CHECKS = {
+  explicit: ({ explicit }) => explicit === true,
+  windows: ({ platform }) => platform === 'win32',
+};
+
+function ruleCallback(checks) {
+  return (context) => {
+    let passed = true;
+    for (const name of checks) {
+      const result = RULE_CHECKS[name](context);
+      context.log(`检测 ${name}：${result ? '通过' : '未通过'}`);
+      passed = result && passed;
+    }
+    return passed;
+  };
+}
+
+export const RULE_CALLBACKS = new Map([
+  ['auto', ruleCallback([])],
+  ['win', ruleCallback(['windows'])],
+  ['learn', ruleCallback(['windows', 'explicit'])],
+]);
 
 function sourceName(source) {
   check(typeof source === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/[a-z0-9_.-]{1,100}$/i.test(source)
@@ -51,7 +83,6 @@ export function parseArgs(args) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
     if (arg === '--local' && !options.local) { options.local = true; continue; }
-    if (arg === '--fragments' && !options.fragments) { options.fragments = true; continue; }
     if (['--add', '--del', '--list', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
       options.mode = arg.slice(2);
       if (['--add', '--del', '--auto_sync', '--add_agents', '--del_agents'].includes(arg)) {
@@ -64,18 +95,25 @@ export function parseArgs(args) {
     agentNames(values);
     options.names = values;
   } else if (['add', 'del', 'auto_sync'].includes(options.mode)) {
-    if (options.mode === 'add' && !options.local) { options.source = values.shift(); sourceName(options.source); }
+    if (options.mode === 'add') {
+      check(values.length === 1 || values.length === 2, '--add 需要一个 type:name，或 owner/repo 与 type:name 两个参数。');
+      if (values.length === 2) { options.source = values.shift(); sourceName(options.source); }
+    }
     if (options.mode === 'auto_sync') {
       const value = values.shift();
       check(value === 'true' || value === 'false', '--auto_sync 需要 true 或 false。');
       options.autoSync = value === 'true';
     }
-    check(values.length > 0, `--${options.mode} 需要明确的 skill 名称。`);
-    values.forEach(skillName);
-    check(new Set(values).size === values.length, '重复 skill 名');
+    check(values.length > 0, `--${options.mode} 需要明确的 type:name。`);
+    options.targets = values.map((value) => typedName(value, { rule: true }));
+    check(new Set(values).size === values.length, '重复 type:name');
+    if (options.mode === 'add') {
+      check(!options.source || options.targets[0].type === 'skill', '两个参数的 --add 仅用于 skill；agents-md 和 rule 使用单参数。');
+      if (options.targets[0].type === 'skill') options.source ??= OWN_SOURCE;
+    }
+    check(options.mode !== 'auto_sync' || options.targets.every(({ type }) => type !== 'rule'), '--auto_sync 使用内容名称；规则通过 --add/--del rule:<name> 操作。');
     options.names = values;
   }
-  check(!options.fragments || ['auto_sync', 'del'].includes(options.mode), '--fragments 需配合 --auto_sync 或 --del 使用。');
   return options;
 }
 
@@ -84,20 +122,48 @@ function objectKeys(value, keys, label) {
 }
 
 export function validateManifest(value, { local = false } = {}) {
-  objectKeys(value, ['agents', 'skills', 'agents-md'], '清单');
+  objectKeys(value, local ? ['agents', 'sync-rules'] : ['agents', 'skill', 'agents-md', 'sync-rules', 'deleted'], '清单');
   if (!local || Object.hasOwn(value, 'agents')) agentNames(value.agents);
-  check(Array.isArray(value.skills), 'skills 必须是数组。');
+  if (local) { validateRules(Object.hasOwn(value, 'sync-rules') ? value['sync-rules'] : {}); return value; }
+  check(Array.isArray(value.skill), 'skill 必须是数组。');
   const names = new Set();
-  for (const entry of value.skills) {
-    objectKeys(entry, local ? ['source', 'name', 'auto_sync'] : ['source', 'name', 'auto_sync', 'deleted'], 'skill');
+  for (const entry of value.skill) {
+    objectKeys(entry, ['source', 'name'], 'skill');
     sourceName(entry.source); skillName(entry.name);
-    check(typeof entry.auto_sync === 'boolean', `${entry.name} 的 auto_sync 必须是 true 或 false。`);
-    check(entry.deleted === undefined || typeof entry.deleted === 'boolean', `${entry.name} 的 deleted 必须是 true 或 false。`);
     check(!names.has(entry.name), `重复 skill 名：${entry.name}`);
     names.add(entry.name);
   }
-  if (Object.hasOwn(value, 'agents-md')) validateFragments({ 'agents-md': value['agents-md'] }, { local });
+  if (Object.hasOwn(value, 'agents-md')) validateFragments({ 'agents-md': value['agents-md'] });
+  if (Object.hasOwn(value, 'deleted')) {
+    check(Array.isArray(value.deleted), 'deleted 必须是对象数组。');
+    const deletedNames = new Set();
+    for (const target of value.deleted) {
+      objectKeys(target, ['type_name', 'source'], 'deleted');
+      const { type, name } = typedName(target.type_name);
+      if (type === 'skill') sourceName(target.source);
+      else check(!Object.hasOwn(target, 'source'), 'agents-md 删除记录无需 source。');
+      check(!deletedNames.has(target.type_name), `重复 deleted 名称：${target.type_name}`);
+      deletedNames.add(target.type_name);
+      check(!(value[type] ?? []).some((entry) => entry.name === name), `${target.type_name} 同时存在于活动清单和 deleted。`);
+    }
+  }
+  validateRules(Object.hasOwn(value, 'sync-rules') ? value['sync-rules'] : {}, value);
   return value;
+}
+
+function validateRules(rules, manifest) {
+  objectKeys(rules, [...RULE_CALLBACKS.keys()], 'sync-rules（每条规则必须有对应回调）');
+  for (const [rule, members] of Object.entries(rules)) {
+    check(Array.isArray(members), `sync-rules.${rule} 必须是数组。`);
+    const seen = new Set();
+    for (const member of members) {
+      objectKeys(member, ['type_name'], `rule:${rule} 成员`);
+      const { type, name } = typedName(member.type_name);
+      check(!seen.has(member.type_name), `rule:${rule} 重复成员：${member.type_name}`);
+      seen.add(member.type_name);
+      if (manifest) check((manifest[type] ?? []).some((entry) => entry.name === name), `rule:${rule} 引用了不存在或已删除的条目：${member.type_name}`);
+    }
+  }
 }
 
 const stateDirectory = (dependencies) => dependencies.stateDir ?? join(homedir(), '.everything-harness');
@@ -111,58 +177,89 @@ function migrateFragmentKey(value) {
   return value;
 }
 
-function readLocalSettings(dependencies) {
+function migrateSkillKey(value) {
+  if (value && Object.hasOwn(value, 'skills')) {
+    check(!Object.hasOwn(value, 'skill'), '本机配置同时包含 skills 和 skill，请合并到 skill 后重试。');
+    value.skill = value.skills;
+    delete value.skills;
+  }
+}
+
+function readLocalSettings(dependencies, manifest) {
   const path = join(stateDirectory(dependencies), 'harness.json');
   const text = existsSync(path) ? readFileSync(path, 'utf8') : null;
   let settings;
   if (text === null) {
     const oldSkills = join(stateDirectory(dependencies), 'skills.json');
     const oldFragments = join(stateDirectory(dependencies), 'agents-md.json');
-    settings = existsSync(oldSkills) ? parseJson(readFileSync(oldSkills, 'utf8'), oldSkills) : { skills: [] };
-    const fragments = existsSync(oldFragments)
-      ? validateFragments(migrateFragmentKey(parseJson(readFileSync(oldFragments, 'utf8'), oldFragments)), { local: true })['agents-md'] : [];
-    settings['agents-md'] = fragments;
-  } else settings = parseJson(text, path);
-  const migrated = Boolean(settings && Object.hasOwn(settings, 'fragments'));
-  migrateFragmentKey(settings);
-  // Older local overrides may contain agent selections; keep their sync choices.
-  if (Array.isArray(settings?.skills)) {
-    for (const entry of settings.skills) {
-      if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.agents;
+    settings = existsSync(oldSkills) ? parseJson(readFileSync(oldSkills, 'utf8'), oldSkills) : { skill: [] };
+    if (existsSync(oldFragments)) {
+      const fragments = migrateFragmentKey(parseJson(readFileSync(oldFragments, 'utf8'), oldFragments));
+      objectKeys(fragments, ['agents-md'], '旧片段清单');
+      settings['agents-md'] = fragments['agents-md'];
     }
+  } else settings = parseJson(text, path);
+  const before = JSON.stringify(settings);
+  migrateFragmentKey(settings);
+  migrateSkillKey(settings);
+  for (const type of ['skill', 'agents-md']) {
+    if (!settings || !Object.hasOwn(settings, type)) continue;
+    check(!Object.hasOwn(settings, 'sync-rules'), '旧开关与 sync-rules 同时存在，请先合并到 sync-rules。');
+  }
+  if (settings && (Object.hasOwn(settings, 'skill') || Object.hasOwn(settings, 'agents-md'))) {
+    const overrides = [];
+    for (const type of ['skill', 'agents-md']) {
+      if (!Object.hasOwn(settings, type)) continue;
+      check(Array.isArray(settings[type]), `${type} 必须是数组。`);
+      const seen = new Set();
+      for (const entry of settings[type]) {
+        objectKeys(entry, type === 'skill' ? ['name', 'source', 'auto_sync', 'agents'] : ['name', 'auto_sync'], '旧本机开关');
+        skillName(entry.name);
+        if (type === 'skill') sourceName(entry.source);
+        check(typeof entry.auto_sync === 'boolean', `${entry.name} 的 auto_sync 必须是 true 或 false。`);
+        check(!seen.has(entry.name), `重复名称：${entry.name}`); seen.add(entry.name);
+        overrides.push({ type_name: `${type}:${entry.name}`, enabled: entry.auto_sync });
+      }
+      delete settings[type];
+    }
+    settings['sync-rules'] ??= {};
+    for (const { type_name, enabled } of overrides) setMembership(settings['sync-rules'], manifest['sync-rules'] ?? {}, type_name, enabled);
   }
   validateManifest(settings, { local: true });
-  return { path, text, settings, migrated };
+  return { path, text, settings, migrated: before !== JSON.stringify(settings) };
 }
 
 function readCatalog(dependencies) {
   const manifest = validateManifest(parseJson((dependencies.fetchManifest ?? fetchManifest)(), '远程清单'));
-  return { manifest, local: readLocalSettings(dependencies) };
+  return { manifest, local: readLocalSettings(dependencies, manifest) };
 }
 
-function enabledSkill(entry, local) {
-  return !entry.deleted && (local.settings.skills.find((item) => item.name === entry.name)?.auto_sync ?? entry.auto_sync);
+function setMembership(overrides, defaults, type_name, enabled) {
+  const effective = { ...defaults, ...overrides };
+  const groups = Object.keys(defaults).filter((rule) => defaults[rule].some((item) => item.type_name === type_name));
+  const selected = enabled ? (groups.length ? groups : ['auto']) : Object.keys(effective);
+  for (const rule of selected) {
+    if (enabled && (effective[rule] ?? []).some((item) => item.type_name === type_name)) continue;
+    const members = (effective[rule] ?? []).filter((item) => item.type_name !== type_name);
+    if (enabled) members.push({ type_name });
+    if (JSON.stringify(members) !== JSON.stringify(effective[rule] ?? [])) overrides[rule] = members;
+  }
 }
 
 const effectiveAgents = (manifest, local) => local.settings.agents ?? manifest.agents;
 
-export function validateFragments(value, { local = false } = {}) {
+export function validateFragments(value) {
   objectKeys(value, ['agents-md'], '片段清单');
   check(Array.isArray(value['agents-md']), 'agents-md 必须是数组。');
   const names = new Set();
   for (const entry of value['agents-md']) {
-    objectKeys(entry, local ? ['name', 'auto_sync'] : ['name', 'auto_sync', 'deleted'], '片段');
+    objectKeys(entry, ['name'], '片段');
     skillName(entry.name);
-    check(typeof entry.auto_sync === 'boolean', `${entry.name} 的 auto_sync 必须是 true 或 false。`);
-    check(entry.deleted === undefined || typeof entry.deleted === 'boolean', `${entry.name} 的 deleted 必须是 true 或 false。`);
     check(!names.has(entry.name), `重复片段名：${entry.name}`);
     names.add(entry.name);
   }
   return value;
 }
-
-const enabledFragment = (entry, local) => !entry.deleted &&
-  ((local.settings['agents-md'] ?? []).find((item) => item.name === entry.name)?.auto_sync ?? entry.auto_sync);
 
 export function instructionPaths(agents, { env = process.env, homeDir = homedir() } = {}) {
   const paths = {
@@ -207,7 +304,8 @@ export function renderFragments(original, fragments) {
 }
 
 function prepareFragments(catalog, agents, dependencies) {
-  const entries = (catalog.manifest['agents-md'] ?? []).filter((entry) => entry.deleted || enabledFragment(entry, catalog.local));
+  const entries = [...deletedEntries(catalog.manifest, 'agents-md'),
+    ...(catalog.manifest['agents-md'] ?? [])];
   if (!entries.length || !agents.length) return [];
   const fragments = entries.map(({ name, deleted }) => deleted ? { name, deleted } : { name, content: (dependencies.fetchFragment ??
     ((name) => fetchText(`https://raw.githubusercontent.com/${OWN_SOURCE}/main/agents-md/${name}.md`)))(name) });
@@ -229,12 +327,23 @@ function applyFragments(writes, dryrun, log) {
   }
 }
 
-function listFragments({ manifest, local }, log) {
-  log('片段\t远程 auto_sync\t本机 auto_sync\t生效 auto_sync\t状态');
-  for (const entry of manifest['agents-md'] ?? []) {
-    const override = (local.settings['agents-md'] ?? []).find((item) => item.name === entry.name);
-    log(`${entry.name}\t${entry.auto_sync}\t${override ? override.auto_sync : '跟随远程'}\t${enabledFragment(entry, local)}\t${entry.deleted ? '已删除（同步时清理）' : '正常'}`);
+function listCatalog(manifest, local, log) {
+  const display = (agents) => agents.length ? agents.join(', ') : '无';
+  log(`远程清单：${MANIFEST_URL}\n本机设置：${local.path}\n远程 agents：${display(manifest.agents)}\n本机 agents：${local.settings.agents ? display(local.settings.agents) : '跟随远程'}\n生效 agents：${display(effectiveAgents(manifest, local))}`);
+  for (const type of ['skill', 'agents-md']) {
+    for (const entry of manifest[type] ?? []) log(`${type}:${entry.name}\t${entry.source ?? OWN_SOURCE}`);
   }
+  const rules = effectiveRules(manifest, local);
+  for (const [name, members] of Object.entries(rules)) {
+    log(`rule:${name}\t${Object.hasOwn(local.settings['sync-rules'] ?? {}, name) ? '本机覆盖' : '跟随远程'}\t${members.map((item) => item.type_name).join(', ')}`);
+  }
+  for (const entry of manifest.deleted ?? []) log(`${entry.type_name}\t${entry.source ?? OWN_SOURCE}\t已删除（同步时清理）`);
+}
+
+function effectiveRules(manifest, local) {
+  const active = new Set(['skill', 'agents-md'].flatMap((type) => (manifest[type] ?? []).map(({ name }) => `${type}:${name}`)));
+  return Object.fromEntries(Object.entries({ ...manifest['sync-rules'], ...local.settings['sync-rules'] })
+    .map(([rule, members]) => [rule, members.filter(({ type_name }) => active.has(type_name))]));
 }
 
 function writeAtomic(path, text) {
@@ -378,18 +487,18 @@ export function containsScripts(path) {
   });
 }
 
-function install(entries, { runSkills, installed, agents, log }) {
+function install(entries, { runSkills, installed, agents, log, scope = 'global' }) {
   checkSources(entries, installed);
   const jobs = installationJobs(entries, agents);
   for (const job of jobs) {
     const label = `${job.source} / ${job.names.join(', ')} → ${job.agents.join(', ')}`;
-    log(`覆盖安装：${label}`);
+    log(`${scope === 'project' ? '临时准备源码' : '覆盖安装'}：${label}`);
     try {
-      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, '-g', '--yes', '--json']), 'skills add');
+      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, ...(scope === 'global' ? ['-g'] : []), '--yes', '--json']), 'skills add');
       check(Array.isArray(results), 'skills add 应返回数组。');
       for (const name of job.names) {
         const result = results.find((item) => item?.name === name);
-        check(result?.status === 'installed' && result.scope === 'global' && typeof result.path === 'string'
+        check(result?.status === 'installed' && result.scope === scope && typeof result.path === 'string'
           && Array.isArray(result.agents) && job.agents.every((agent) => result.agents.includes(AGENTS.get(agent))),
         `${name} 未完成安装：${result?.error ?? result?.status ?? '缺少安装结果'}`);
         installed.set(name, { ...result, source: job.source, sourceType: 'github' });
@@ -418,79 +527,123 @@ function remove(entries, context) {
   }
 }
 
-function listCatalog(manifest, local, log) {
-  const entries = manifest.skills;
-  const display = (agents) => agents.length ? agents.join(', ') : '无';
-  log(`远程清单：${MANIFEST_URL}\n本机设置：${local.path}\n远程 agents：${display(manifest.agents)}\n本机 agents：${local.settings.agents ? display(local.settings.agents) : '跟随远程'}\n生效 agents：${display(effectiveAgents(manifest, local))}`);
-  log('skill\t来源\t远程 auto_sync\t本机 auto_sync\t生效 auto_sync\t状态');
-  log(entries.length ? entries.map((entry) => {
-    const override = local.settings.skills.find((item) => item.name === entry.name);
-    return `${entry.name}\t${entry.source}\t${entry.auto_sync}\t${override ? override.auto_sync : '跟随远程'}\t${enabledSkill(entry, local)}\t${entry.deleted ? '已删除（同步时清理）' : '正常'}`;
-  }).join('\n') : '没有匹配的 skill。');
+function resolvePlans(manifest, options) {
+  const plans = [];
+  for (const target of options.targets ?? []) {
+    const rule = target.type === 'rule' ? target.name : null;
+    if (rule) check(Object.hasOwn(manifest['sync-rules'] ?? {}, rule), `不存在规则：rule:${rule}`);
+    const targets = rule ? (options.members ?? manifest['sync-rules'][rule]).map(({ type_name }) => typedName(type_name)) : [target];
+    const entries = targets.map(({ type, name }) => {
+      const tombstone = deletedEntries(manifest, type).find((entry) => entry.name === name);
+      check(!tombstone || options.mode === 'del', `${type}:${name} 已标记删除，无法重新启用。`);
+      let entry = tombstone ?? (manifest[type] ?? []).find((item) => item.name === name);
+      if (options.mode === 'add') {
+        if (type === 'skill' && !rule) {
+          check(!entry || entry.source.toLowerCase() === options.source.toLowerCase(), `来源冲突：${type}:${name}`);
+        }
+        if (!entry && !options.local) entry = { name, ...(type === 'skill' ? { source: options.source } : {}) };
+      }
+      check(entry, `清单中不存在${type === 'skill' ? 'skill' : '片段'}：${type}:${name}`);
+      return { ...entry, type };
+    });
+    plans.push({ rule, entries });
+  }
+  if (options.mode === 'del') return [{ rule: null, entries: [...new Map(plans.flatMap(({ entries }) => entries)
+    .map((entry) => [`${entry.type}:${entry.name}`, entry])).values()] }];
+  return plans;
 }
 
 function manageLocal(options, dependencies, log) {
   const { manifest, local } = readCatalog(dependencies);
-  const key = options.fragments ? 'agents-md' : 'skills';
-  const label = options.fragments ? '片段' : 'skill';
-  const entries = agentMode(options.mode) ? [] : options.names.map((name) => {
-    const entry = (manifest[key] ?? []).find((item) => item.name === name);
-    check(entry, `远程清单中不存在${label}：${name}。`);
-    check(!entry.deleted || options.mode === 'del', `${label} ${name} 已标记删除，无法重新启用。`);
-    return entry;
-  });
-  if (options.fragments && options.mode === 'del') {
-    removeFragments(entries, effectiveAgents(manifest, local), dependencies, log);
-  } else if (!options.fragments && skillOperation(options.mode)) {
-    const context = makeContext(dependencies, log, effectiveAgents(manifest, local));
-    if (options.mode === 'add') {
-      install(entries, context);
-      (dependencies.runDryruns ?? runDryruns)(entries, context.installed, { log, env: dependencies.env });
-    } else remove(entries, context);
-  }
-  check(readLocalSettings(dependencies).text === local.text, '操作期间本机设置已被修改；本机操作已完成，请重新运行同一条命令。');
+  const plans = resolvePlans(manifest, options);
+  if (!executePlans(plans, options, effectiveAgents(manifest, local), dependencies, log)) return;
+  check(readLocalSettings(dependencies, manifest).text === local.text, '操作期间本机设置已被修改；本机操作已完成，请重新运行同一条命令。');
   if (agentMode(options.mode)) local.settings.agents = changeAgents(effectiveAgents(manifest, local), options);
-  for (const entry of entries) {
-    local.settings[key] = (local.settings[key] ?? []).filter((item) => item.name !== entry.name);
-    const { deleted, ...override } = entry;
-    local.settings[key].push({ ...override, auto_sync: options.mode === 'auto_sync' ? options.autoSync : options.mode === 'add' });
+  else {
+    const rules = local.settings['sync-rules'] ??= {};
+    for (const { rule, entries } of plans) {
+      if (rule && options.mode === 'add') rules[rule] = structuredClone(manifest['sync-rules'][rule]);
+      else for (const { type, name } of entries) {
+        setMembership(rules, manifest['sync-rules'] ?? {}, `${type}:${name}`, options.mode === 'auto_sync' ? options.autoSync : options.mode === 'add');
+      }
+    }
   }
-  if (!agentMode(options.mode)) local.settings[key].sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  validateManifest(local.settings, { local: true });
   writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n');
   log(`本机设置已保存：${local.path}（${options.names.join(', ')}）`);
-  if (agentMode(options.mode)) log('agents 设置将在下次同步时生效；已有安装保留。');
 }
 
 export function changeManifest(manifest, options) {
+  validateManifest(manifest);
   const next = structuredClone(manifest);
-  const affected = [];
-  if (agentMode(options.mode)) {
-    next.agents = changeAgents(next.agents, options);
-    return { next: validateManifest(next), affected };
-  }
-  const key = options.fragments ? 'agents-md' : 'skills';
-  const label = options.fragments ? '片段' : 'skill';
-  const records = next[key] ?? [];
-  for (const name of options.names) {
-    let entry = records.find((item) => item.name === name);
-    check(!entry?.deleted || options.mode === 'del', `${label} ${name} 已标记删除，请使用新名称。`);
+  const plans = resolvePlans(manifest, options);
+  const affected = plans.flatMap(({ entries }) => entries);
+  if (agentMode(options.mode)) next.agents = changeAgents(next.agents, options);
+  else for (const { type, name, source } of affected) {
+    const type_name = `${type}:${name}`;
+    const records = next[type] ?? [];
+    const entry = records.find((item) => item.name === name);
     if (options.mode === 'add') {
-      check(!entry || entry.source.toLowerCase() === options.source.toLowerCase(), `来源冲突：${name}`);
-      if (!entry) { entry = { name, source: options.source, auto_sync: true }; records.push(entry); }
-      affected.push(entry);
+      if (!entry) {
+        (next[type] ??= []).push({ name, ...(type === 'skill' ? { source } : {}) });
+        setMembership(next['sync-rules'] ??= {}, {}, type_name, true);
+      }
     } else if (options.mode === 'auto_sync') {
-      check(entry, `清单中不存在${label}：${name}`);
-      entry.auto_sync = options.autoSync;
-      affected.push(entry);
+      const defaults = structuredClone(next['sync-rules'] ?? {});
+      setMembership(next['sync-rules'] ??= {}, defaults, type_name, options.autoSync);
     } else {
-      check(entry, `清单中不存在${label}：${name}`);
-      entry.deleted = true;
-      entry.auto_sync = false;
-      affected.push(entry);
+      if (entry) {
+        next[type] = records.filter((item) => item.name !== name);
+        (next.deleted ??= []).push({ type_name, ...(type === 'skill' ? { source } : {}) });
+      }
+      for (const [rule, members] of Object.entries(next['sync-rules'] ?? {})) next['sync-rules'][rule] = members.filter((item) => item.type_name !== type_name);
     }
   }
-  if (!options.fragments) records.sort((a, b) => a.name.localeCompare(b.name, 'en'));
-  return { next: validateManifest(next), affected };
+  if (affected.some(({ type }) => type === 'skill')) next.skill.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  return { next: validateManifest(next), affected, plans };
+}
+
+// Stage the selected source using the same CLI in a disposable project. Tests
+// run before any global install so a failed batch leaves live content intact.
+export function checkSkills(entries, agents, dependencies, log) {
+  if (!entries.length) return;
+  const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'eh-check-'));
+  try {
+    const installed = new Map();
+    const runSkills = (dependencies.createCheckRunner ?? createSkillsRunner)({ env: dependencies.env, cwd: root });
+    install(entries, { runSkills, installed, agents, log, scope: 'project' });
+    (dependencies.runDryruns ?? runDryruns)(entries, installed, { log, env: dependencies.env });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+function executePlans(plans, options, agents, dependencies, log) {
+  if (!skillOperation(options.mode)) return true;
+  for (const { rule, entries } of plans) {
+    if (options.mode === 'add' && rule) {
+      log(`规则回调：rule:${rule}`);
+      const passed = RULE_CALLBACKS.get(rule)({ explicit: options.explicit !== false, platform: dependencies.platform ?? process.platform, log });
+      if (!passed) { log(`跳过 rule:${rule}：检测条件未满足。`); return false; }
+    }
+    if (!entries.length) continue;
+    check(agents.length > 0, '生效 agents 为空；请先设置目标。');
+    const skills = entries.filter(({ type }) => type === 'skill');
+    const fragments = entries.filter(({ type }) => type === 'agents-md');
+    const manifest = options.mode === 'del'
+      ? { deleted: fragments.map(({ name }) => ({ type_name: `agents-md:${name}` })) }
+      : { 'agents-md': fragments.map(({ name }) => ({ name })) };
+    const writes = prepareFragments({ manifest }, agents, dependencies);
+    const context = skills.length ? makeContext(dependencies, log, agents) : null;
+    if (context) checkSources(skills, context.installed);
+    if (options.mode === 'add') {
+      (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log);
+      if (context && !options.dryrun) install(skills, context);
+    } else if (context) {
+      for (const entry of skills) log(`skill 待删除：${entry.name}；${options.dryrun ? '同步时将自动删除' : '正在清理'}对应安装。`);
+      if (!options.dryrun) remove(skills, context);
+    }
+    applyFragments(writes, options.dryrun, log);
+  }
+  return true;
 }
 
 function manageManifest(options, dependencies, log) {
@@ -535,21 +688,12 @@ function manageManifest(options, dependencies, log) {
 function applyManifestChange(options, dependencies, log, root, git, before, sources, onWrite) {
   const file = 'harness.json';
   const manifest = validateManifest(parseJson(before, '远程清单'));
-  const { next, affected } = changeManifest(manifest, options);
-  if (options.fragments && options.mode === 'del') {
-    removeFragments(affected, effectiveAgents(manifest, readLocalSettings(dependencies)), dependencies, log);
-  } else if (!options.fragments && skillOperation(options.mode)) {
-    const context = makeContext(dependencies, log, effectiveAgents(manifest, readLocalSettings(dependencies)));
-    checkSources(affected, context.installed);
-    if (options.mode === 'add') {
-      install(affected, context);
-      (dependencies.runDryruns ?? runDryruns)(affected, context.installed, { log, env: dependencies.env });
-    } else remove(affected, context);
-  }
+  const { next, affected, plans } = changeManifest(manifest, options);
+  if (!executePlans(plans, options, effectiveAgents(manifest, readLocalSettings(dependencies, manifest)), dependencies, log)) return;
   const text = JSON.stringify(next, null, 2) + '\n';
   const removedPaths = options.mode === 'del' ? affected
-    .filter((entry) => options.fragments || entry.source.toLowerCase() === OWN_SOURCE.toLowerCase())
-    .map((entry) => options.fragments ? `agents-md/${entry.name}.md` : `skills/${entry.name}`)
+    .filter((entry) => entry.type === 'agents-md' || entry.source.toLowerCase() === OWN_SOURCE.toLowerCase())
+    .map((entry) => entry.type === 'agents-md' ? `agents-md/${entry.name}.md` : `skills/${entry.name}`)
     .filter((path) => git(['ls-files', '--', path]).trim()) : [];
   if (JSON.stringify(next) === JSON.stringify(manifest) && !removedPaths.length) {
     log('清单及源码无变化，无需 commit / push。'); return;
@@ -559,7 +703,7 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
   try {
     if (removedPaths.length) git(['rm', '-r', '--', ...removedPaths]);
     const action = options.mode === 'auto_sync' ? `Set auto_sync=${options.autoSync} for` : ['add', 'add_agents'].includes(options.mode) ? 'Add' : 'Remove';
-    git(['commit', '--only', '-m', `${action} ${options.fragments ? 'agents-md' : agentMode(options.mode) ? 'agents' : 'skills'}: ${options.names.join(', ')}`, '--', file, ...removedPaths]);
+    git(['commit', '--only', '-m', `${action} ${options.names.join(', ')}`, '--', file, ...removedPaths]);
   } catch (error) { throw new Error(`源码清理或 Git commit 失败；操作副本及清单改动已保留：${error.message}`); }
   const errors = [];
   let pushed = false;
@@ -573,12 +717,6 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
   if (agentMode(options.mode)) log('agents 设置将在下次同步时生效；已有安装保留，本机 agents 覆盖仍优先。');
 }
 
-function removeFragments(entries, agents, dependencies, log) {
-  check(agents.length > 0, '生效 agents 为空；请先设置目标。');
-  const catalog = { manifest: { 'agents-md': entries.map((entry) => ({ ...entry, deleted: true })) } };
-  applyFragments(prepareFragments(catalog, agents, dependencies), false, log);
-}
-
 function makeContext(dependencies, log, agents) {
   check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
   const runSkills = dependencies.runSkills ?? createSkillsRunner({ env: dependencies.env, cwd: dependencies.cwd });
@@ -589,40 +727,35 @@ function makeContext(dependencies, log, agents) {
 export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? console.log;
-  if (options.help) { log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n--add / --del：先操作本机，成功后提交并推送清单；删除保留 deleted=true 的记录。\n--auto_sync：只修改开关；--fragments 可配合 --auto_sync 或 --del 管理片段。\n--add_agents / --del_agents：只修改共用目标，下次同步生效。\n--local：仅本机操作和设置，不操作 Git。\n--list：显示开关、删除状态和 agents；--dryrun：预告清理，检查开启的 skill 环境、片段正文和目标标记，不安装或删除。\n支持的 agent：${[...AGENTS.keys()].join(', ')}`); return; }
+  if (options.help) {
+    log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n--add 单参数使用 type:name；双参数为 owner/repo skill:name，自有 skill 默认来源为 ${OWN_SOURCE}。\n--local：仅本机安装和规则覆盖；省略时修改远程清单并 commit / push。\nrule:auto 无额外条件；rule:win 检测 Windows；rule:learn 检测 Windows 与显式调用。\n同步依次执行各规则的 add：规则回调 → 检测函数 → 全部 skill 测试 → 批量安装。del 跳过规则检测和 skill 测试。\n--auto_sync：兼容开关入口，通过 sync-rules 调整成员。\n--list 保持只读；--dryrun 检测规则和 skill 环境，保留本机安装。\n支持的 agent：${[...AGENTS.keys()].join(', ')}`);
+    return;
+  }
   const [major, minor] = process.versions.node.split('.').map(Number);
   check(major > 22 || (major === 22 && minor >= 20), '需要 Node.js ≥22.20.0。');
   if (['add', 'del', 'auto_sync'].includes(options.mode) || agentMode(options.mode)) {
     return options.local ? manageLocal(options, dependencies, log) : manageManifest(options, dependencies, log);
   }
   const { manifest, local } = readCatalog(dependencies);
-  let entries = manifest.skills;
-  if (options.mode === 'list') {
-    listFragments({ manifest, local }, log);
-    listCatalog(manifest, local, log);
-    return;
-  }
-  entries = entries.filter((entry) => enabledSkill(entry, local));
-  const deleted = manifest.skills.filter((entry) => entry.deleted);
+  if (options.mode === 'list') { listCatalog(manifest, local, log); return; }
   const agents = effectiveAgents(manifest, local);
-  const writes = prepareFragments({ manifest, local }, agents, dependencies);
   if (!agents.length) {
     if (options.mode === 'sync') initializeLocalSettings(local);
     log('生效 agents 为空，无需安装或检查。'); return;
   }
-  const context = entries.length || deleted.length ? makeContext(dependencies, log, agents) : null;
-  if (context) {
-    checkSources([...entries, ...deleted], context.installed);
-    for (const entry of deleted) log(`skill 已标记删除：${entry.name}；${options.mode === 'dryrun' ? '同步时将自动删除' : '正在自动清理'}对应安装。`);
-    if (options.mode !== 'dryrun') {
-      if (deleted.length) remove(deleted, context);
-      install(entries, context);
-    }
-  } else log('没有匹配的 skill，无需安装或检查。');
-  applyFragments(writes, options.mode === 'dryrun', log);
-  if (options.mode === 'sync') initializeLocalSettings(local);
-  if (entries.length) (dependencies.runDryruns ?? runDryruns)(entries, context.installed, { log, env: dependencies.env });
-  log(options.mode === 'dryrun' ? '环境检查完成。' : '覆盖同步和环境检查完成。');
+  const dryrun = options.mode === 'dryrun';
+  const deleted = ['skill', 'agents-md'].flatMap((type) => deletedEntries(manifest, type));
+  executePlans([{ rule: null, entries: deleted }], { mode: 'del', dryrun }, agents, dependencies, log);
+  const failures = [];
+  for (const [name, members] of Object.entries(effectiveRules(manifest, local))) {
+    // Use the exact same add planner and executor as explicit rule invocation.
+    const add = { ...parseArgs(['--local', '--add', `rule:${name}`]), explicit: false, dryrun, members };
+    try { executePlans(resolvePlans({ ...manifest, 'sync-rules': { ...manifest['sync-rules'], [name]: members } }, add), add, agents, dependencies, log); }
+    catch (error) { failures.push(`${name}: ${error.message}`); log(`[rule:${name}] 失败：${error.message}`); }
+  }
+  check(!failures.length, `规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
+  if (!dryrun) initializeLocalSettings(local);
+  log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。');
 }
 
 if (import.meta.main) {
