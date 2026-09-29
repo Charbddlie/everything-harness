@@ -30,4 +30,5 @@
 
 - 保持代码和文档简洁，只描述当前设计，不记录修改过程。不扩展 TUI、安装数据库或通用链接管理。
 - Node.js ≥22.20.0，UTF-8 / LF。维护 skill 时同步维护 `SKILL.md` 和 dryrun；操作说明集中在 `skills/harness-manage/SKILL.md`。
+- Windows 下 sync 的全部命令行输出使用 GBK，包括进度、帮助、列表和标准错误；其他系统使用 UTF-8。文件统一使用 UTF-8，GBK 无法表示的输出字符替换为 `?`。
 - 使用 `node --test`。安装、下载和删除测试使用隔离目录及本地测试仓库。不得修改个人 harness 配置。

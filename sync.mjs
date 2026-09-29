@@ -19,7 +19,37 @@ agent:codex、agent:copilot 选择同步目标；内容和规则由远程 harnes
 
 function check(condition, message) { if (!condition) throw new Error(message); }
 
-export function createProgressLogger(write = (line) => writeFileSync(process.stdout.fd, `${line}\n`)) {
+let gbkCharacters;
+
+export function encodeOutput(text, platform = process.platform) {
+  if (platform !== 'win32') return Buffer.from(text, 'utf8');
+  if (!gbkCharacters) {
+    // Node provides a GBK decoder; invert its two-byte table for console output.
+    gbkCharacters = new Map([['€', 0x80]]);
+    const decoder = new TextDecoder('gbk'), pair = new Uint8Array(2);
+    for (let lead = 0x81; lead <= 0xfe; lead++) for (let trail = 0x40; trail <= 0xfe; trail++) {
+      if (trail === 0x7f) continue;
+      pair[0] = lead; pair[1] = trail;
+      const character = decoder.decode(pair);
+      if (character.length === 1 && character !== '\ufffd') gbkCharacters.set(character, (lead << 8) | trail);
+    }
+  }
+  const bytes = Buffer.alloc(text.length * 2);
+  let offset = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    const encoded = code < 0x80 ? code : gbkCharacters.get(character) ?? 0x3f;
+    if (encoded > 0xff) bytes[offset++] = encoded >> 8;
+    bytes[offset++] = encoded & 0xff;
+  }
+  return bytes.subarray(0, offset);
+}
+
+function writeOutput(line, fd = process.stdout.fd) {
+  writeFileSync(fd, encodeOutput(`${line}\n`));
+}
+
+export function createProgressLogger(write = writeOutput) {
   let step = 0, substep = 0;
   return (message, { stage = false, substage = false, status } = {}) => {
     if (stage) {
@@ -608,7 +638,7 @@ function fetchText(url) {
   return runCommand(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-fsSL', '--connect-timeout', '20', '--max-time', '120', url]);
 }
 
-export function runDryruns(entries, installed, { log = console.log, env = process.env, strict = true } = {}) {
+export function runDryruns(entries, installed, { log = writeOutput, env = process.env, strict = true } = {}) {
   const errors = [];
   for (const entry of entries) {
     if (entry.source.toLowerCase() !== OWN_SOURCE.toLowerCase()) {
@@ -948,7 +978,7 @@ function clean(options, dependencies, log) {
 
 export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
-  const log = dependencies.log ?? (options.help || options.mode === 'list' ? console.log : createProgressLogger());
+  const log = dependencies.log ?? (options.help || options.mode === 'list' ? writeOutput : createProgressLogger());
   if (options.help) {
     log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n规则 auto 无额外条件，win 要求 Windows，learn 要求 Windows 和本机显式启用。\n--list 显示清单和本机同步设置；--dryrun 预览并检查，保留正式安装与配置。`);
     return;
@@ -1036,5 +1066,5 @@ function syncCatalog(options, dependencies, log, catalog) {
 
 if (import.meta.main) {
   try { sync(process.argv.slice(2)); }
-  catch (error) { createProgressLogger(console.error)(`操作失败：${error.message}`, { status: '失败' }); process.exitCode = 1; }
+  catch (error) { createProgressLogger((line) => writeOutput(line, process.stderr.fd))(`操作失败：${error.message}`, { status: '失败' }); process.exitCode = 1; }
 }

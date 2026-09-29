@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { OWN_SOURCE, findSkill, sync } from '../sync.mjs';
+import { fileURLToPath } from 'node:url';
+import { OWN_SOURCE, encodeOutput, findSkill, sync } from '../sync.mjs';
 
 const agents = ['codex', 'github-copilot'];
 const entry = (name, source = 'example/skills') => ({ name, source });
@@ -206,11 +207,11 @@ test('piped output shows the heading first and each source after its download', 
   t.after(() => child.kill());
   const events = [];
   let pending = '', errors = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk) => { errors += chunk; });
+  const outputDecoder = new TextDecoder(process.platform === 'win32' ? 'gbk' : 'utf-8');
+  const errorDecoder = new TextDecoder(process.platform === 'win32' ? 'gbk' : 'utf-8');
+  child.stderr.on('data', (chunk) => { errors += errorDecoder.decode(chunk, { stream: true }); });
   child.stdout.on('data', (chunk) => {
-    pending += chunk;
+    pending += outputDecoder.decode(chunk, { stream: true });
     const lines = pending.split('\n');
     pending = lines.pop();
     for (const line of lines) {
@@ -228,6 +229,40 @@ test('piped output shows the heading first and each source after its download', 
   assert.deepEqual(events, ['3. 下载源码', '下载完成：example/skills', '下载完成：other/skills']);
   assert.ok(!existsSync(f.home));
   assert.deepEqual(readdirSync(f.tempDir), []);
+});
+
+test('Windows console output uses GBK for help, listing, progress and errors while files stay UTF-8', (t) => {
+  const f = fixture(t);
+  assert.equal(encodeOutput('中文', 'win32').toString('hex'), 'd6d0cec4');
+  assert.equal(encodeOutput('中文', 'linux').toString('hex'), 'e4b8ade69687');
+  assert.equal(encodeOutput('😀', 'win32').toString(), '?');
+  const module = new URL('../sync.mjs', import.meta.url).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const { sync } = await import(${JSON.stringify(module)});
+    const dependencies = {
+      homeDir: ${JSON.stringify(f.home)}, env: {},
+      fetchManifest: () => JSON.stringify({
+        agents: ['codex'], skill: [], 'agents-md': [{ name: 'base' }],
+        'sync-rules': { auto: [{ type_name: 'agents-md:base' }] },
+      }),
+      fetchFragment: () => '中文指令',
+    };
+    sync(['--help'], dependencies);
+    sync(['--list'], dependencies);
+    sync([], dependencies);
+  `]);
+  assert.equal(result.status, 0, result.stderr.toString());
+  const output = new TextDecoder('gbk').decode(result.stdout);
+  for (const message of ['用法', '远程清单', '创建本地配置', '新增', '规则同步和环境检查完成']) assert.ok(output.includes(message));
+  assert.ok(!output.includes('\ufffd'));
+  assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /中文指令/);
+  const error = spawnSync(process.execPath, [
+    '--import', 'data:text/javascript,Object.defineProperty(process,"platform",{value:"win32"})',
+    fileURLToPath(new URL('../sync.mjs', import.meta.url)), '--invalid',
+  ]);
+  assert.equal(error.status, 1);
+  assert.match(new TextDecoder('gbk').decode(error.stderr), /操作失败：未知、重复或互斥参数/);
 });
 
 test('empty agent selection stores synchronization choices without installation until an agent is enabled', (t) => {
