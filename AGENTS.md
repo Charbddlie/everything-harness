@@ -14,7 +14,7 @@
 
 ## sync 脚本的使用方式
 
-使用 sync 前，参考 [skills/skill-manage/SKILL.md](skills/skill-manage/SKILL.md)。远程入口、增删内容、同步开关、目标设置、状态查看和环境检查的操作说明统一维护在该文档中。
+使用 sync 前，参考 [skills/harness-manage/SKILL.md](skills/harness-manage/SKILL.md)，先确认当前 session 实际使用的 skill 安装目录；同步根目录为非用户主目录时，在命令中指定对应的 `--home`。远程入口、增删内容、同步开关、目标设置、状态查看和环境检查的操作说明统一维护在该文档中。
 
 ## 项目的开发原则
 

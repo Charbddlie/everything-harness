@@ -1,13 +1,28 @@
 ---
-name: skill-manage
-description: 管理 eh（everything-harness）的 skill、AGENTS.md 片段和同步规则，使用远程 sync.mjs 安装、删除、检测环境及设置全局 agents。
+name: harness-manage
+description: 管理 eh（everything-harness）的 skill、AGENTS.md 片段和同步规则；确认当前 session 的 skill 目录后，使用远程 sync.mjs 安装、删除、检测环境及设置全局 agents。
 ---
 
-# Skill 管理
+# Harness 管理
 
 `eh` 是 `everything-harness` 的简称。源码在本仓库维护，发布流程为：修改源码 → commit / push → 远程 sync → 单向覆盖本机内容。用户要求先审阅或暂缓发布时，保留改动等待确认。
 
 执行安装、删除或配置修改前，先明确范围：带 `--local` 操作本机安装与规则覆盖；省略时修改远程清单并 commit / push。范围不明确时先询问。“本地的 skill”也可能指待发布源码，需要确认具体范围。
+
+## 确认当前 session 的同步位置
+
+执行同步指令前，先确认当前 session 实际使用的 skill 目录，再生成命令：
+
+1. 以当前 session 的 skill 清单、加载路径或实际读取的 `SKILL.md` 路径为依据。优先检查本 skill 的安装位置；仓库中的 `skills/` 源码、当前工作目录和内置 `.system` 技能目录不能单独作为同步位置的依据。
+2. 展开目录别名并检查软链接，确认安装目录与实际文件的对应关系。从 `<根目录>/.agents/skills/<skill>/SKILL.md` 推导同步根目录；agent 目录下的 skill 链接应追溯到共享安装位置。
+3. 将同步根目录与用户主目录 `~` 比较，比较时规范化路径并处理软链接。根目录为用户主目录时可省略 `--home`；根目录为其他位置时，所有同步、增删、预检及重试指令都必须携带 `--home "<已确认的绝对根目录>"`。
+4. 用户明确指定目标位置时采用用户指定值；session 中存在多个安装根目录，或路径结构无法对应 `--home` 时，先确认目标再执行。
+
+例如，当前 session 从 `/work/demo/.agents/skills/harness-manage/SKILL.md` 加载本 skill，则同步命令为：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "/work/demo"
+```
 
 需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。面向用户统一使用远程入口：
 
@@ -21,13 +36,13 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-在 node 参数末尾追加操作，Windows 放在外层双引号内。
+在 node 参数末尾追加操作及已确认位置所需的 `--home`，Windows 放在外层双引号内。
 
 ## 指定内容根目录
 
 `--home <目录>` 指定本次同步的根目录，默认用户主目录 `~`。传入后，skill、指令和本机配置分别使用该目录下的 `.agents`、`.codex`、`.copilot`、`.everything-harness`；显式目录优先于 `CODEX_HOME`、`COPILOT_HOME`。相对路径按启动目录解析，安装和检查子进程使用同一主目录。Git 发布沿用原环境的提交身份与认证。
 
-在当前工作目录执行同步，自动将所在文件夹传给 `--home`：
+当已确认当前工作目录就是同步根目录时，可使用以下写法自动将所在文件夹传给 `--home`；其他位置使用已确认的绝对根目录。
 
 Linux / macOS：
 
@@ -54,7 +69,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 例如：
 
 ```text
---add skill:skill-manage
+--add skill:harness-manage
 --add owner/repo skill:example
 --add agents-md:win-dev
 --add rule:learn
@@ -77,7 +92,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 | 规则 | 条件 | 当前成员 |
 | --- | --- | --- |
-| `auto` | 无额外条件 | copilot-api、skill-manage 与通用片段 |
+| `auto` | 无额外条件 | copilot-api、harness-manage 与通用片段 |
 | `win` | Windows | win-dev |
 | `learn` | Windows 且通过 add 显式调用 | paper-add、paper-read、zotero-init |
 

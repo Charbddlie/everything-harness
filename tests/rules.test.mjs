@@ -79,8 +79,31 @@ test('checked-in rules assign paper and Zotero to learn and win-dev to win', () 
   const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
   assert.deepEqual(manifest['sync-rules'].learn, ['paper-add', 'paper-read', 'zotero-init'].map((name) => member(`skill:${name}`)));
   assert.deepEqual(manifest['sync-rules'].win, [member('agents-md:win-dev')]);
-  assert.ok(manifest['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:skill-manage'));
+  assert.ok(manifest['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:harness-manage'));
   assert.ok([...manifest.skill, ...manifest['agents-md']].every((entry) => !Object.hasOwn(entry, 'auto_sync')));
+});
+
+test('harness-manage replaces skill-manage and removes the old installation despite local membership', (t) => {
+  const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
+  assert.ok(manifest.skill.some(({ name }) => name === 'harness-manage'));
+  assert.ok(!manifest.skill.some(({ name }) => name === 'skill-manage'));
+  assert.deepEqual(manifest.deleted.find(({ type_name }) => type_name === 'skill:skill-manage'), {
+    type_name: 'skill:skill-manage', source: OWN_SOURCE,
+  });
+  assert.ok(existsSync(new URL('../skills/harness-manage/SKILL.md', import.meta.url)));
+  assert.ok(!existsSync(new URL('../skills/skill-manage/SKILL.md', import.meta.url)));
+  const f = fixture(t, manifest);
+  for (const name of ['skill-manage', 'unmanaged']) {
+    f.installed.set(name, { name, source: OWN_SOURCE, sourceType: 'github', scope: 'global',
+      path: join(f.root, 'installed', name), agents: ['Codex', 'GitHub Copilot'] });
+  }
+  put(f.settings, JSON.stringify({ 'sync-rules': { auto: [member('skill:skill-manage'), member('skill:harness-manage')] } }));
+  f.run();
+  assert.ok(!f.installed.has('skill-manage'));
+  assert.ok(f.installed.has('harness-manage'));
+  assert.ok(f.installed.has('unmanaged'));
+  assert.ok(f.events.indexOf('del:skill-manage') < f.events.indexOf('add:harness-manage'));
+  assert.ok(!f.events.includes('test:skill-manage'));
 });
 
 for (const platform of ['linux', 'win32']) {

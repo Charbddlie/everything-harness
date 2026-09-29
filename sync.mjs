@@ -676,7 +676,7 @@ function executePlans(plans, options, agents, dependencies, log) {
 }
 
 function manageManifest(options, dependencies, log) {
-  const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'skill-manage-'));
+  const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'harness-manage-'));
   const baseEnv = dependencies.gitEnv ?? dependencies.env ?? process.env;
   const env = { ...baseEnv, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
     GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' };

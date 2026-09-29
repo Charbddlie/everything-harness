@@ -9,15 +9,15 @@
       "source": "Charbddlie/everything-harness"
     },
     {
+      "name": "harness-manage",
+      "source": "Charbddlie/everything-harness"
+    },
+    {
       "name": "paper-add",
       "source": "Charbddlie/everything-harness"
     },
     {
       "name": "paper-read",
-      "source": "Charbddlie/everything-harness"
-    },
-    {
-      "name": "skill-manage",
       "source": "Charbddlie/everything-harness"
     },
     {
@@ -35,7 +35,7 @@
   "sync-rules": {
     "auto": [
       { "type_name": "skill:copilot-api" },
-      { "type_name": "skill:skill-manage" },
+      { "type_name": "skill:harness-manage" },
       { "type_name": "agents-md:formula-display" },
       { "type_name": "agents-md:simple-dev" },
       { "type_name": "agents-md:simple-doc" },
@@ -55,6 +55,7 @@
     { "type_name": "skill:formula-display", "source": "Charbddlie/everything-harness" },
     { "type_name": "skill:prune-lore", "source": "Charbddlie/everything-harness" },
     { "type_name": "skill:simple-doc", "source": "Charbddlie/everything-harness" },
+    { "type_name": "skill:skill-manage", "source": "Charbddlie/everything-harness" },
     { "type_name": "agents-md:dev-directory" },
     { "type_name": "agents-md:win-dir" }
   ]
