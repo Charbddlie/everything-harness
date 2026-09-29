@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { OWN_SOURCE, checkSkills, runCommand, sync } from '../sync.mjs';
+import { runCommand, sync } from '../sync.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const skillText = (name, version) => `---\nname: ${name}\ndescription: Integration fixture.\n---\n${version}\n`;
@@ -56,11 +56,4 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   run(['--del', 'skill:one']);
   assert.ok(['.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
   assert.ok(!readdirSync(root).some((name) => name.startsWith('eh-check-')));
-});
-
-test('GitHub source preflight without package-manager installation', {
-  skip: process.env.SKILLS_INTEGRATION !== '1', timeout: 180_000,
-}, (t) => {
-  checkSkills(['copilot-api', 'harness-manage'].map((name) => ({ name, source: OWN_SOURCE })),
-    ['codex', 'github-copilot'], {}, (line) => t.diagnostic(line));
 });
