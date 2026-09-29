@@ -1,6 +1,6 @@
 ---
 name: harness-manage
-description: 管理 eh 的本机同步范围与 harness 目标；确认 session 的安装根目录后，使用 sync.mjs 启停 skill、片段、规则和 agent 同步，检查或清理安装。
+description: 管理 eh 的本机同步范围与 harness 目标；确认 session 的安装根目录后，使用 sync.mjs 启停 skill、片段、规则和 agent 同步，检查或清理安装。当用户提到“更新skill”, “同步eh”时触发。
 ---
 
 # Harness 管理
