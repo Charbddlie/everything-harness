@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AGENTS, OWN_SOURCE, RULE_CALLBACKS, RULE_CHECKS, changeManifest, checkSkills, parseArgs, sync, validateManifest } from '../sync.mjs';
@@ -352,6 +352,30 @@ test('preflight stages source in a temporary project, tests all skills and clean
   assert.ok(logs.some((line) => line.includes('failure-zotero')));
   assert.ok(paths.every((path) => !existsSync(path)));
   assert.deepEqual(readdirSync(f.root), []);
+});
+
+test('preflight uses user temp independently of content home and cleans up after a runner failure', (t) => {
+  const f = fixture(t);
+  const mock = t.mock.method(os, 'homedir', () => f.root);
+  syncBuiltinESMExports();
+  let root;
+  try {
+    assert.throws(() => checkSkills([skill('core')], ['codex'], {
+      homeDir: join(f.root, 'custom-home'),
+      createCheckRunner: ({ cwd }) => {
+        root = cwd;
+        assert.equal(dirname(cwd), join(f.root, 'temp'));
+        assert.ok(existsSync(cwd));
+        throw new Error('fixture runner failure');
+      },
+    }, () => {}), /fixture runner failure/);
+    assert.ok(!existsSync(root));
+    assert.deepEqual(readdirSync(join(f.root, 'temp')), []);
+    assert.ok(!existsSync(join(f.root, 'custom-home')));
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 for (const blockedType of ['file', 'directory']) for (const failCheck of [false, true]) {

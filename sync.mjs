@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
 
 export const OWN_SOURCE = 'Charbddlie/everything-harness';
@@ -682,6 +682,12 @@ export function changeManifest(manifest, options) {
   return { next: validateManifest(next), affected, plans };
 }
 
+function createTemporaryDirectory(prefix, dependencies) {
+  const parent = dependencies.tempDir ?? join(homedir(), 'temp');
+  mkdirSync(parent, { recursive: true });
+  return mkdtempSync(join(parent, prefix));
+}
+
 function cleanupTemporaryDirectory(root, operationError) {
   let failedPath = root;
   const remove = (path) => {
@@ -707,7 +713,7 @@ function cleanupTemporaryDirectory(root, operationError) {
 // run before any global install so a failed batch leaves live content intact.
 export function checkSkills(entries, agents, dependencies, log) {
   if (!entries.length) return;
-  const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'eh-check-'));
+  const root = createTemporaryDirectory('eh-check-', dependencies);
   let operationError;
   try {
     const installed = new Map();
@@ -751,7 +757,7 @@ function executePlans(plans, options, agents, dependencies, log) {
 }
 
 function manageManifest(options, dependencies, log) {
-  const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'harness-manage-'));
+  const root = createTemporaryDirectory('harness-manage-', dependencies);
   const baseEnv = dependencies.gitEnv ?? dependencies.env ?? process.env;
   const env = { ...baseEnv, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
     GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' };

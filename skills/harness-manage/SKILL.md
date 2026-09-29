@@ -108,6 +108,8 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 临时项目和 Git 临时副本逐项清理，删除遇到文件占用等可重试错误时最多重试 3 次。仍失败时显示具体文件或子目录的完整路径及系统错误；若安装、检查或 Git 操作也失败，会同时保留原始错误。可根据路径排查占用或权限，修复后重新运行同一条命令。
 
+本实验分支将同步脚本自建的临时项目和 Git 临时副本改放到用户主目录的 `~/temp/`，不存在时自动创建父目录，清理时保留父目录。位置不随 `--home` 改变；第三方 CLI 自己的缓存和临时文件仍由该 CLI 管理。此改动用于对比目录位置，不保证解决 Windows 的 `EPERM`。
+
 ## 删除与配置
 
 - `--del skill:NAME`、`--del agents-md:NAME`：删除指定内容，可一次传多个名称。
