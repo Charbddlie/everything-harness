@@ -433,7 +433,8 @@ function effectiveRules(manifest, local) {
 
 function reportUnapplied(manifest, rules, appliedRules, dependencies, log) {
   const pendingRules = Object.keys(rules).filter((name) => !appliedRules.has(name));
-  const members = new Set(Object.values(rules).flatMap((entries) => entries.map(({ type_name }) => type_name)));
+  const members = new Set([...Object.values(manifest['sync-rules'] ?? {}), ...Object.values(rules)]
+    .flatMap((entries) => entries.map(({ type_name }) => type_name)));
   const home = dependencies.homeDir ?? homedir();
   const directories = ['.agents', '.codex', '.copilot'].map((agent) => join(home, agent, 'skills'));
   const pendingSkills = manifest.skill.filter(({ name }) => !members.has(`skill:${name}`)
@@ -824,12 +825,13 @@ export function checkSkills(entries, agents, dependencies, log, apply) {
 
 function executePlans(plans, options, agents, dependencies, parentLog) {
   if (!skillOperation(options.mode)) return true;
-  for (const { rule, entries, passed, error, unmet = [] } of plans) {
+  for (const { rule, entries, passed, error, unmet = [], localOverride = false } of plans) {
     const grouped = options.mode === 'add' && rule;
     if (grouped) parentLog(`自动配置: ${rule}`, { stage: true });
     const log = grouped ? (message, metadata = {}) => parentLog(message, { ...metadata, substage: true }) : parentLog;
     if (error) throw error;
     if (grouped) {
+      if (!entries.length) log(`rule:${rule}：${localOverride ? '本机覆盖后' : '规则'}成员为空，本次没有选中要安装或更新的内容。`);
       const allowed = passed ?? RULE_CALLBACKS.get(rule)({ explicit: options.explicit !== false, platform: dependencies.platform ?? process.platform, log, unmet });
       if (!allowed) { log(`rule:${rule}：${unmet.join('；')}`, { status: '未命中' }); return false; }
     }
@@ -977,6 +979,7 @@ function syncCatalog(options, dependencies, log) {
   const rules = effectiveRules(manifest, local), appliedRules = new Set();
   if (!agents.length) {
     log('生效 agents 为空，无需安装或检查。', { status: '跳过' });
+    log('完成', { stage: true });
     reportUnapplied(manifest, rules, appliedRules, dependencies, log);
     return;
   }
@@ -994,9 +997,10 @@ function syncCatalog(options, dependencies, log) {
     const add = { ...parseArgs(['--local', '--add', `rule:${name}`]), members };
     const [plan] = resolvePlans({ ...manifest, 'sync-rules': { ...manifest['sync-rules'], [name]: members } }, add);
     plan.unmet = [];
+    plan.localOverride = Object.hasOwn(local.settings['sync-rules'] ?? {}, name);
     try {
       plan.passed = RULE_CALLBACKS.get(name)({ explicit: false, platform: dependencies.platform ?? process.platform,
-        log: (message, metadata) => log(`[rule:${name}] ${message}`, metadata), unmet: plan.unmet });
+        log() {}, unmet: plan.unmet });
       if (plan.passed) checkSources(plan.entries.filter(({ type }) => type === 'skill'), context);
     } catch (error) { plan.error = error; }
     return plan;
@@ -1027,6 +1031,7 @@ function syncCatalog(options, dependencies, log) {
     reportUnapplied(manifest, rules, appliedRules, dependencies, log);
     throw new Error(`规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
   }
+  log('完成', { stage: true });
   log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。', { status: '完成' });
   reportUnapplied(manifest, rules, appliedRules, dependencies, log);
 }
