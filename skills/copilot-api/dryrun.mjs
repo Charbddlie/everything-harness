@@ -16,5 +16,5 @@ if (errors.length) {
   console.error(`[copilot-api] ${errors.join(' ')}`);
   process.exitCode = 1;
 } else {
-  console.log('[copilot-api] Node.js and npm are ready. Run the skill to install and sign in.');
+  console.log('[copilot-api] Node.js and npm are ready. Run the skill to check, start, or initialize the gateway.');
 }

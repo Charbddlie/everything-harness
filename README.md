@@ -238,7 +238,7 @@ AGENTS.md
 
 自有 skill 包含脚本时，须在 skill 根目录提供 `dryrun.mjs`；纯说明 skill 无需添加。Dryrun 只检查环境和必要配置，不执行实际业务操作，错误由各个 skill 自行说明。
 
-`copilot-api` 替代原本的 `claude-init`，远程 `auto_sync=true`，默认安装技能说明及启动脚本模板。调用时安装本地网关、引导登录，并按用户选择配置 Claude Code / Codex；安装 skill 本身只检查 Node.js 与 npm，不启动网关或改写客户端配置。Windows 模板使用兼容 GBK 的 ASCII / CRLF，macOS / Linux 模板使用 LF。
+`copilot-api` 替代原本的 `claude-init`，远程 `auto_sync=true`，默认安装技能说明及启动脚本模板。支持检查环境、启动和初始化；「启动 copilotapi」也会触发。检查模式报告状态，启动时复用已有环境，缺少网关时执行初始化。初始化后，若本机未配置 Codex，则询问是否配置；若网关有 Claude 模型且本机未安装 Claude Code，则询问是否安装并配置。安装 skill 本身仅检查 Node.js 与 npm。Windows 模板使用兼容 GBK 的 ASCII / CRLF，macOS / Linux 模板使用 LF。
 
 `win-dir` 和 `formula-display` 的常驻规则通过片段同步。
 
