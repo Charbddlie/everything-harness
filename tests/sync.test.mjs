@@ -101,7 +101,7 @@ test('a failed source is attempted once across rules and retried on the next inv
   f.dependencies.fetchRepository = () => { attempts++; throw new Error('network unavailable'); };
   assert.throws(() => f.run(), /auto: network unavailable, win: network unavailable/);
   assert.equal(attempts, 1);
-  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
   assert.deepEqual(readdirSync(f.tempDir), []);
   f.dependencies.fetchRepository = download;
   f.run();
@@ -117,7 +117,7 @@ test('source conflict blocks downloads, replacement and deletion', (t) => {
   assert.throws(() => f.run(['--local', '--del', 'skill:one']), /来源冲突/);
   assert.equal(f.downloads.length, 0);
   assert.equal(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), 'Keep');
-  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
 });
 
 test('unmarked content is explicitly selected for replacement, other directories and locks are untouched', (t) => {
@@ -144,7 +144,9 @@ test('list and dryrun preserve installed content and settings', (t) => {
 });
 
 test('failed skill checks preserve content in dryrun but only warn during sync and local add', (t) => {
-  const f = fixture(t); f.run();
+  const f = fixture(t);
+  f.manifest.skill.forEach((entry) => { entry.source = OWN_SOURCE; });
+  f.run();
   f.manifest['agents-md'] = [{ name: 'base' }];
   f.manifest['sync-rules'].auto.push({ type_name: 'agents-md:base' });
   f.dependencies.fetchRepository = (source, path) => {
@@ -164,7 +166,7 @@ test('failed skill checks preserve content in dryrun but only warn during sync a
   assert.ok(f.logs.some((line) => line.startsWith('[警告] 2 个 skill')));
   assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
   put(f.settings, '{"sync-rules":{"auto":[]}}');
-  f.run(['--local', '--add', 'example/skills', 'skill:one']);
+  f.run(['--local', '--add', 'skill:one']);
   assert.ok(JSON.parse(readFileSync(f.settings))['sync-rules'].auto.some(({ type_name }) => type_name === 'skill:one'));
 });
 
@@ -175,8 +177,32 @@ test('invalid skill structure still blocks normal synchronization', (t) => {
   assert.match(readFileSync(join(f.shared('one'), 'SKILL.md'), 'utf8'), /Version one/);
 });
 
+test('sync, dryrun and local add execute only own-source checks', (t) => {
+  const f = fixture(t);
+  f.manifest.skill[0].source = OWN_SOURCE.toUpperCase();
+  const ownMarker = join(f.root, 'own-ran'), thirdPartyMarker = join(f.root, 'third-party-ran');
+  f.dependencies.fetchRepository = (source, path) => {
+    for (const { name } of f.manifest.skill.filter((entry) => entry.source === source)) {
+      const marker = name === 'one' ? ownMarker : thirdPartyMarker;
+      put(join(path, 'skills', name, 'SKILL.md'), text(name));
+      put(join(path, 'skills', name, 'dryrun.mjs'),
+        `import { appendFileSync } from 'node:fs'; appendFileSync(${JSON.stringify(marker)}, 'ran\\n'); ${name === 'two' ? 'process.exitCode = 1;' : ''}`);
+    }
+  };
+  f.run(['--dryrun']);
+  assert.ok(!existsSync(f.home));
+  f.run();
+  f.run(['--local', '--add', 'example/skills', 'skill:two']);
+  assert.equal(readFileSync(ownMarker, 'utf8'), 'ran\nran\n');
+  assert.ok(!existsSync(thirdPartyMarker));
+  assert.ok(existsSync(join(f.shared('two'), 'dryrun.mjs')));
+  assert.match(readFileSync(join(f.shared('two'), 'SKILL.md'), 'utf8'), /Version one/);
+  assert.ok(f.logs.some((line) => line === '[two] 跳过：第三方 skill'));
+});
+
 test('progress output numbers actual stages and labels warnings without hiding application', (t) => {
   const f = fixture(t);
+  f.manifest.skill.forEach((entry) => { entry.source = OWN_SOURCE; });
   f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   f.dependencies.fetchRepository = (source, path) => {
     for (const name of ['one', 'two']) {
@@ -187,20 +213,19 @@ test('progress output numbers actual stages and labels warnings without hiding a
   f.run();
   const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置', '2. 清理已删除的 skill', '3. 清理 sysprompt', '4. 下载源码',
-    '5. 自动配置: auto', '5.1 检查 skill 环境', '5.2 应用 skill 到目标目录',
-    '6. 清理临时目录', '7. 创建本地设置',
+    '1. 创建本地配置', '2. 清理 skill 和 sysprompt', '3. 下载源码',
+    '4. 自动配置: auto', '4.1 检查 skill 环境', '4.2 应用 skill 到目标目录', '5. 清理临时目录',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[警告] [one] 失败')));
-  assert.ok(f.logs.some((line) => line.includes('[通过] 覆盖安装')));
+  assert.ok(f.logs.some((line) => line.includes('[新增] 安装')));
   assert.ok(f.logs.at(-1).startsWith('  [完成]'));
   assert.ok(!f.logs.some((line) => /本次未应用的 rule|未安装的独立skill/.test(line)));
   f.logs.length = 0;
   f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   assert.throws(() => f.run(['--dryrun']), /环境检查失败/);
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置', '2. 预览 skill 删除', '3. 清理 sysprompt', '4. 下载源码',
-    '5. 自动配置: auto', '5.1 检查 skill 环境', '6. 清理临时目录',
+    '1. 预览更新本地配置', '2. 清理 skill 和 sysprompt', '3. 下载源码',
+    '4. 自动配置: auto', '4.1 检查 skill 环境', '5. 清理临时目录',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[失败] [one]')));
   assert.ok(!f.logs.some((line) => line.includes('应用 skill 到目标目录')));
@@ -216,12 +241,12 @@ test('automatic configuration resets subnumbering per rule and keeps later stage
   f.run();
   const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
   assert.deepEqual(stages(), [
-    '1. 读取清单和本机设置', '2. 清理已删除的 skill', '3. 清理 sysprompt', '4. 下载源码',
-    '5. 自动配置: auto', '5.1 检查 skill 环境', '5.2 应用 skill 到目标目录',
-    '6. 自动配置: win', '6.1 检查 skill 环境', '6.2 应用 skill 到目标目录',
-    '7. 自动配置: learn', '8. 清理临时目录', '9. 创建本地设置',
+    '1. 创建本地配置', '2. 清理 skill 和 sysprompt', '3. 下载源码',
+    '4. 自动配置: auto', '4.1 检查 skill 环境', '4.2 应用 skill 到目标目录',
+    '5. 自动配置: win', '5.1 检查 skill 环境', '5.2 应用 skill 到目标目录',
+    '6. 自动配置: learn', '7. 清理临时目录',
   ]);
-  assert.ok(f.logs.some((line) => line.includes('[跳过] 跳过 rule:learn')));
+  assert.ok(f.logs.some((line) => line.includes('[未命中] rule:learn：需要显式调用 --add rule:learn')));
   f.logs.length = 0;
   f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   f.run(['--local', '--add', 'rule:win']);
@@ -277,7 +302,7 @@ test('piped output shows the heading first and each source after its download', 
     const lines = pending.split('\n');
     pending = lines.pop();
     for (const line of lines) {
-      const event = line.match(/4\. 下载源码|下载完成：[^ ]+/);
+      const event = line.match(/3\. 下载源码|下载完成：[^ ]+/);
       if (!event) continue;
       events.push(event[0]);
       if (events.length <= 2) child.stdin.write('1');
@@ -288,7 +313,7 @@ test('piped output shows the heading first and each source after its download', 
     child.on('close', resolve);
   });
   assert.equal(code, 0, errors);
-  assert.deepEqual(events, ['4. 下载源码', '下载完成：example/skills', '下载完成：other/skills']);
+  assert.deepEqual(events, ['3. 下载源码', '下载完成：example/skills', '下载完成：other/skills']);
   assert.ok(!existsSync(f.home));
   assert.deepEqual(readdirSync(f.tempDir), []);
 });
@@ -303,7 +328,7 @@ test('tombstones delete before new installs, respect source conflicts and leave 
   assert.ok(!existsSync(f.shared('one')));
   assert.ok(existsSync(f.shared('renamed')));
   assert.ok(existsSync(f.shared('unmanaged')));
-  assert.ok(f.logs.findIndex((line) => line.startsWith('删除本机安装')) < f.logs.findIndex((line) => line.startsWith('覆盖安装')));
+  assert.ok(f.logs.findIndex((line) => line.startsWith('删除本机安装')) < f.logs.findIndex((line) => line.startsWith('安装：')));
   f.run();
   assert.ok(!existsSync(f.shared('one')));
 });
@@ -356,7 +381,7 @@ test('skill source links cannot copy external files', (t) => {
 test('own script-bearing skills require dryrun and every failure is reported', (t) => {
   const f = fixture(t), path = join(f.root, 'own'), logs = [];
   put(join(path, 'scripts', 'helper.mjs'), '');
-  assert.throws(() => runDryruns([entry('own', OWN_SOURCE), entry('missing')], new Map([['own', { path }]]),
+  assert.throws(() => runDryruns([entry('own', OWN_SOURCE), entry('missing', OWN_SOURCE)], new Map([['own', { path }]]),
     { log: (line) => logs.push(line) }), /2 个 skill/);
   assert.ok(logs.some((line) => line.includes('缺少 dryrun')));
   assert.ok(logs.some((line) => line.includes('无法检查环境')));
@@ -401,11 +426,10 @@ test('remote own-skill and fragment additions reuse the publication checkout', (
 
 test('remote add applies failed-check content before publishing without changing a dirty user checkout', (t) => {
   const f = remoteFixture(t), events = [];
+  put(join(f.repository, 'skills', 'two', 'dryrun.mjs'), 'console.error("missing test setting"); process.exitCode=1;');
+  f.git(['add', 'skills/two/dryrun.mjs']); f.git(['commit', '--quiet', '-m', 'Add failing own check']);
+  f.git(['push', '--quiet']);
   put(join(f.repository, 'unrelated.txt'), 'Keep'); f.git(['add', 'unrelated.txt']);
-  f.dependencies.fetchRepository = (source, path) => {
-    put(join(path, 'skills', 'two', 'SKILL.md'), text('two'));
-    put(join(path, 'skills', 'two', 'dryrun.mjs'), 'console.error("missing test setting"); process.exitCode=1;');
-  };
   f.dependencies.runDryruns = (...args) => {
     events.push('dryrun'); assert.equal(f.remoteManifest().skill.length, 1);
     return runDryruns(...args);
@@ -414,7 +438,7 @@ test('remote add applies failed-check content before publishing without changing
     if (args[0] === 'commit') { events.push('commit'); assert.ok(existsSync(f.shared('two'))); }
     return runCommand(command, args, options);
   };
-  f.run(['--add', 'example/skills', 'skill:two']);
+  f.run(['--add', 'skill:two']);
   assert.deepEqual(events, ['dryrun', 'commit']);
   assert.ok(f.logs.some((line) => line.startsWith('[警告]')));
   assert.equal(f.remoteManifest().skill.length, 2);

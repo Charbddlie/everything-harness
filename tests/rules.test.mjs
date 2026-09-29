@@ -34,7 +34,7 @@ function fixture(t, manifest = {
     fetchFragment: (name) => { events.push(`body:${name}`); return `Body ${name}`; },
     log: (message) => {
       logs.push(message); events.push(message);
-      const add = message.match(/^覆盖安装：(\S+) \/ (\S+) →/), del = message.match(/^删除本机安装：(\S+) →/);
+      const add = message.match(/^安装：(\S+) \/ (\S+) →/), del = message.match(/^删除本机安装：(\S+) →/);
       if (add) { calls.push(['add', add[1], add[2]]); events.push(`add:${add[2]}`); }
       if (del) { calls.push(['remove', del[1]]); events.push(`del:${del[1]}`); }
     },
@@ -220,8 +220,84 @@ test('sync continues through all rules after a failure and reports the aggregate
   assert.throws(() => f.run(), /auto: core failure/);
   assert.ok(f.events.includes('自动配置: learn'));
   assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:'));
-  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(f.read(), { 'sync-rules': {} });
   assert.ok(f.logs.includes('本次未应用的 rule：rule:auto, rule:learn'));
+});
+
+test('sync saves configuration first, reports real changes and reconciles both content types after rules', (t) => {
+  const f = fixture(t, {
+    agents: ['codex', 'github-copilot'], skill: ['core', 'shared', 'windows', 'fresh', 'standalone'].map((name) => skill(name)),
+    'agents-md': ['base', 'windows', 'fresh'].map((name) => ({ name })),
+    deleted: [member('agents-md:old'), member('agents-md:absent'),
+      { ...member('skill:old'), source: OWN_SOURCE }, { ...member('skill:absent'), source: OWN_SOURCE }],
+    'sync-rules': {
+      auto: ['skill:core', 'skill:shared', 'skill:fresh', 'agents-md:base', 'agents-md:fresh'].map(member),
+      win: ['skill:windows', 'skill:shared', 'agents-md:windows', 'agents-md:base'].map(member), learn: [],
+    },
+  });
+  for (const name of ['core', 'shared', 'windows', 'standalone', 'unmanaged', 'old']) f.seed(name);
+  put(f.target, `Personal\n${block('base', 'Old base')}\n${block('windows', 'Old windows')}\n${block('old', 'Expired')}\n${block('unmanaged', 'Keep')}\n`);
+  const records = [], originalLog = f.dependencies.log, download = f.dependencies.fetchRepository;
+  f.dependencies.log = (message, metadata = {}) => { records.push({ message, ...metadata }); originalLog(message); };
+  f.dependencies.fetchRepository = (source, path) => {
+    assert.deepEqual(f.read(), { 'sync-rules': {} });
+    assert.ok(f.installed.has('core') && f.installed.has('shared'));
+    if (records[0].message === '创建本地配置') {
+      assert.ok(f.installed.has('windows'));
+      assert.ok(readFileSync(f.target, 'utf8').includes('eh:windows:'));
+    }
+    assert.ok(!f.installed.has('old'));
+    assert.ok(!readFileSync(f.target, 'utf8').includes('eh:old:'));
+    download(source, path);
+  };
+  f.run();
+  assert.equal(records[0].message, '创建本地配置');
+  const has = (status, fragment) => records.some((record) => record.status === status && record.message.includes(fragment));
+  assert.ok(has('过期', 'old'));
+  assert.ok(has('过期', 'agents-md:old'));
+  assert.ok(has('更新', ' / core →') && has('更新', 'agents-md:base'));
+  assert.ok(has('新增', ' / fresh →') && has('新增', 'agents-md:fresh'));
+  assert.ok(has('删除', 'windows') && has('删除', 'agents-md:windows'));
+  assert.ok(has('未命中', '需要 Windows，当前为 linux'));
+  assert.ok(has('未命中', '需要显式调用 --add rule:learn'));
+  assert.ok(records.findIndex(({ status }) => status === '删除') > records.findLastIndex(({ status }) => ['新增', '更新'].includes(status)));
+  assert.ok(!records.some(({ message }) => /absent|待删除|无需删除|检测条件未满足/.test(message)));
+  for (const name of ['core', 'shared', 'fresh', 'standalone', 'unmanaged']) assert.ok(f.installed.has(name));
+  assert.ok(!f.installed.has('windows'));
+  const body = readFileSync(f.target, 'utf8');
+  assert.ok(body.includes('Personal') && body.includes(block('unmanaged', 'Keep')) && body.includes('eh:base:'));
+  assert.ok(!body.includes('eh:windows:'));
+  records.length = 0;
+  f.run();
+  assert.equal(records[0].message, '更新本地配置');
+  assert.ok(!records.some(({ status }) => ['过期', '删除', '新增'].includes(status)));
+  f.dependencies.platform = 'win32'; records.length = 0;
+  f.run();
+  assert.ok(has('新增', ' / windows →') && has('新增', 'agents-md:windows'));
+});
+
+test('dryrun preserves unmatched content and a failed matching rule keeps its shared content', (t) => {
+  const f = fixture(t, {
+    agents: ['codex', 'github-copilot'], skill: [skill('core'), skill('windows')],
+    'agents-md': [{ name: 'base' }, { name: 'windows' }],
+    'sync-rules': {
+      auto: [member('skill:core'), member('agents-md:base')],
+      win: ['skill:core', 'skill:windows', 'agents-md:base', 'agents-md:windows'].map(member),
+    },
+  });
+  f.seed('core'); f.seed('windows');
+  const original = `Personal\n${block('base', 'Keep base')}\n${block('windows', 'Remove windows')}\n`;
+  put(f.target, original);
+  f.run(['--dryrun']);
+  assert.ok(!existsSync(f.settings));
+  assert.ok(f.installed.has('core') && f.installed.has('windows'));
+  assert.equal(readFileSync(f.target, 'utf8'), original);
+  f.dependencies.fetchRepository = () => { throw new Error('network unavailable'); };
+  assert.throws(() => f.run(), /network unavailable/);
+  assert.ok(f.installed.has('core'));
+  assert.ok(!f.installed.has('windows'));
+  assert.equal(readFileSync(f.target, 'utf8'), `Personal\n${block('base', 'Keep base')}\n\n`);
+  assert.ok(existsSync(f.settings));
 });
 
 test('sync summary excludes rule members and installed skills, but includes empty skill directories', (t) => {

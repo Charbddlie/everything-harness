@@ -32,7 +32,7 @@ export function createProgressLogger(write = (line) => writeFileSync(process.std
       }
       return;
     }
-    const prefix = message.match(/^\[(警告|失败|跳过|通过|完成)\]\s*/);
+    const prefix = message.match(/^\[(警告|失败|跳过|通过|完成|过期|删除|新增|更新|创建|未命中)\]\s*/);
     const label = status ?? prefix?.[1] ?? '信息';
     const content = prefix ? message.slice(prefix[0].length) : message;
     write(content.split(/\r?\n/).map((line) => `  [${label}] ${line}`).join('\n'));
@@ -64,7 +64,9 @@ function ruleCallback(checks) {
     let passed = true;
     for (const name of checks) {
       const result = RULE_CHECKS[name](context);
-      context.log(`检测 ${name}：${result ? '通过' : '未通过'}`, { status: result ? '通过' : '跳过' });
+      const reason = name === 'windows' ? `需要 Windows，当前为 ${context.platform}` : '需要显式调用 --add rule:learn，当前为自动同步';
+      if (!result) context.unmet?.push(reason);
+      context.log(`检测 ${name}：${result ? '通过' : `未通过；${reason}`}`, { status: result ? '通过' : '未命中' });
       passed = result && passed;
     }
     return passed;
@@ -249,7 +251,6 @@ function readLocalSettings(dependencies, manifest) {
       settings['agents-md'] = fragments['agents-md'];
     }
   } else settings = parseJson(text, path);
-  const before = JSON.stringify(settings);
   migrateFragmentKey(settings);
   migrateSkillKey(settings);
   for (const type of ['skill', 'agents-md']) {
@@ -276,7 +277,7 @@ function readLocalSettings(dependencies, manifest) {
     for (const { type_name, enabled } of overrides) setMembership(settings['sync-rules'], manifest['sync-rules'] ?? {}, type_name, enabled);
   }
   validateManifest(settings, { local: true });
-  return { path, text, settings, migrated: before !== JSON.stringify(settings) };
+  return { path, text, settings };
 }
 
 function readCatalog(dependencies) {
@@ -360,24 +361,26 @@ export function prepareInstructionCleanup(targets, names) {
     const path = realpathSync(target);
     if (writes.has(path)) continue;
     const original = readFileSync(path, 'utf8');
-    const selected = names ?? [...original.matchAll(/<!-- eh:([a-z0-9-]+):start -->/g)].map((match) => match[1]);
+    const present = [...original.matchAll(/<!-- eh:([a-z0-9-]+):start -->/g)].map((match) => match[1]);
+    const selected = names ? present.filter((name) => names.includes(name)) : present;
     const content = renderFragments(original, selected.map((name) => ({ name, deleted: true })));
-    if (content !== original) writes.set(path, content);
+    if (content !== original) writes.set(path, { content, names: selected });
   }
   return writes;
 }
 
-export function applyInstructionCleanup(writes, dryrun, log) {
+export function applyInstructionCleanup(writes, dryrun, log, status = '删除') {
   const failures = [];
-  for (const [path, content] of writes) {
-    log(`${dryrun ? '将移除' : '移除'} eh 标记块：${path}`);
+  for (const [path, { content, names }] of writes) {
     if (!dryrun) {
       try { writeAtomic(path, content, log); }
       catch (error) {
         const message = `${path} 写入失败：${error.message}`;
         failures.push(message); log(message, { status: '失败' });
+        continue;
       }
     }
+    for (const name of names) log(`${dryrun ? '将移除 ' : ''}agents-md:${name} → ${path}`, { status });
   }
   return failures;
 }
@@ -402,7 +405,10 @@ function applyFragments(writes, dryrun, log) {
   if (writes.length) log(dryrun ? '检查指令片段' : '应用指令片段', { stage: true });
   for (const { path, original, content, names } of writes) {
     if (!dryrun && content !== original) writeAtomic(path, content, log);
-    if (names.length) log(`片段${dryrun ? '检查通过' : '覆盖同步'}：${names.join(', ')} → ${path}`, { status: '通过' });
+    for (const name of names) {
+      const status = original.includes(`<!-- eh:${name}:start -->`) ? '更新' : '新增';
+      log(`${dryrun ? '将应用 ' : ''}agents-md:${name} → ${path}`, { status });
+    }
   }
 }
 
@@ -443,7 +449,7 @@ export function writeAtomic(path, text, log = createProgressLogger()) {
   finally { cleanupTemporary(temporary, log); }
 }
 
-function initializeLocalSettings(local, log) {
+function saveLocalSettings(local, log) {
   if (local.text === null) {
     mkdirSync(dirname(local.path), { recursive: true });
     try { writeFileSync(local.path, JSON.stringify(local.settings, null, 2) + '\n', { flag: 'wx' }); }
@@ -451,7 +457,7 @@ function initializeLocalSettings(local, log) {
       if (error.code === 'EEXIST') throw new Error('本机设置刚被其他进程创建，请重新同步。');
       throw error;
     }
-  } else if (local.migrated) {
+  } else {
     check(readFileSync(local.path, 'utf8') === local.text, '操作期间本机设置已被修改，请重新同步。');
     writeAtomic(local.path, JSON.stringify(local.settings, null, 2) + '\n', log);
   }
@@ -549,12 +555,16 @@ function fetchText(url) {
 export function runDryruns(entries, installed, { log = console.log, env = process.env, strict = true } = {}) {
   const errors = [];
   for (const entry of entries) {
+    if (entry.source.toLowerCase() !== OWN_SOURCE.toLowerCase()) {
+      log(`[${entry.name}] 跳过：第三方 skill`, { status: '跳过' });
+      continue;
+    }
     try {
       const path = installed.get(entry.name)?.path;
       const script = path && join(path, 'dryrun.mjs');
       if (!script || !existsSync(script)) {
         check(path, '尚未安装，无法检查环境');
-        check(entry.source.toLowerCase() !== OWN_SOURCE.toLowerCase() || !containsScripts(path), '包含脚本但缺少 dryrun.mjs，请更新此 skill');
+        check(!containsScripts(path), '包含脚本但缺少 dryrun.mjs，请更新此 skill');
         log(`[${entry.name}] 跳过：无检查脚本`, { status: '跳过' });
         continue;
       }
@@ -609,22 +619,20 @@ function install(entries, prepared, context) {
       mkdirSync(directory, { recursive: true });
       const target = join(realpathSync(directory), entry.name);
       if (written.has(target)) continue;
+      const status = entryExists(target) ? '更新' : '新增';
       copySkill(entry, prepared.get(entry.name).path, target, context.log);
       written.add(target);
-      context.log(`覆盖安装：${entry.source} / ${entry.name} → ${target}`, { status: '通过' });
+      context.log(`安装：${entry.source} / ${entry.name} → ${target}`, { status });
     }
   }
 }
 
-function remove(entries, context) {
+function remove(entries, context, dryrun = false) {
   for (const entry of entries) {
     const shared = join(context.sharedSkillsDir, entry.name);
     const targets = context.skillLoadDirs
       ? context.agents.map((agent) => join(context.skillLoadDirs[agent], entry.name)) : [shared];
-    if (!targets.some(entryExists) && !entryExists(shared)) {
-      context.log(`${entry.name} 未安装，无需删除。`, { status: '跳过' });
-      continue;
-    }
+    if (!targets.some(entryExists) && !entryExists(shared)) continue;
     const retained = context.skillLoadDirs
       ? [...AGENTS.keys()].filter((agent) => !context.agents.includes(agent))
         .map((agent) => join(context.skillLoadDirs[agent], entry.name)).filter(entryExists)
@@ -634,12 +642,12 @@ function remove(entries, context) {
         && retained.some((path) => existsSync(path) && realpathSync(path) === realpathSync(target));
       check(!aliasesRetained, `${target} 的目标安装仍存在（由未选中 agent 共享），请同时选择所有共享 agents。`);
     }
-    for (const target of targets) {
-      removeDirectory(target);
-      context.log(`删除本机安装：${entry.name} → ${target}`, { status: '通过' });
+    const removals = [...new Set([...targets, ...(context.skillLoadDirs && !retained.length ? [shared] : [])])];
+    for (const target of removals.filter(entryExists)) {
+      if (!dryrun) removeDirectory(target);
+      context.log(`${dryrun ? '将' : ''}删除本机安装：${entry.name} → ${target}`, { status: entry.deleted ? '过期' : '删除' });
     }
-    if (context.skillLoadDirs && !retained.length) removeDirectory(shared);
-    check(targets.every((path) => !entryExists(path)), `${entry.name} 的目标安装仍存在，未修改设置或创建 commit。`);
+    if (!dryrun) check(targets.every((path) => !entryExists(path)), `${entry.name} 的目标安装仍存在，请检查对应目录。`);
   }
 }
 
@@ -814,22 +822,16 @@ export function checkSkills(entries, agents, dependencies, log, apply) {
   apply?.(prepared);
 }
 
-function applySkillRemoval(entries, context, dryrun, log) {
-  log(dryrun ? '预览 skill 删除' : '清理已删除的 skill', { stage: true });
-  for (const entry of entries) log(`skill 待删除：${entry.name}；${dryrun ? '同步时将自动删除' : '正在清理'}对应安装。`);
-  if (!dryrun && entries.length) remove(entries, context);
-}
-
 function executePlans(plans, options, agents, dependencies, parentLog) {
   if (!skillOperation(options.mode)) return true;
-  for (const { rule, entries, passed, error } of plans) {
+  for (const { rule, entries, passed, error, unmet = [] } of plans) {
     const grouped = options.mode === 'add' && rule;
     if (grouped) parentLog(`自动配置: ${rule}`, { stage: true });
     const log = grouped ? (message, metadata = {}) => parentLog(message, { ...metadata, substage: true }) : parentLog;
     if (error) throw error;
     if (grouped) {
-      const allowed = passed ?? RULE_CALLBACKS.get(rule)({ explicit: options.explicit !== false, platform: dependencies.platform ?? process.platform, log });
-      if (!allowed) { log(`跳过 rule:${rule}：检测条件未满足。`, { status: '跳过' }); return false; }
+      const allowed = passed ?? RULE_CALLBACKS.get(rule)({ explicit: options.explicit !== false, platform: dependencies.platform ?? process.platform, log, unmet });
+      if (!allowed) { log(`rule:${rule}：${unmet.join('；')}`, { status: '未命中' }); return false; }
     }
     if (!entries.length) continue;
     check(agents.length > 0, '生效 agents 为空；请先设置目标。');
@@ -848,9 +850,11 @@ function executePlans(plans, options, agents, dependencies, parentLog) {
     if (options.mode === 'add') {
       (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log,
         options.dryrun ? undefined : (prepared) => install(skills, prepared, context));
-    } else if (context) applySkillRemoval(skills, context, options.dryrun, log);
+    } else {
+      log('清理 skill 和 sysprompt', { stage: true });
+      if (context) remove(skills, context, options.dryrun);
+    }
     if (options.mode === 'del') {
-      if (names.length) log('清理 sysprompt', { stage: true });
       const failures = applyInstructionCleanup(writes, options.dryrun, log);
       check(!failures.length, `sysprompt 清理失败：${failures.join('\n')}`);
     } else applyFragments(writes, options.dryrun, log);
@@ -960,34 +964,39 @@ export function sync(args, dependencies = {}) {
 }
 
 function syncCatalog(options, dependencies, log) {
-  if (options.mode !== 'list') log('读取清单和本机设置', { stage: true });
+  const dryrun = options.mode === 'dryrun';
+  if (options.mode !== 'list') {
+    const existing = existsSync(join(stateDirectory(dependencies), 'harness.json'));
+    log(`${dryrun ? '预览' : ''}${existing ? '更新' : '创建'}本地配置`, { stage: true });
+  }
   const { manifest, local } = readCatalog(dependencies);
   if (options.mode === 'list') { listCatalog(manifest, local, log); return; }
+  if (!dryrun) saveLocalSettings(local, log);
+  log(`${dryrun ? '将保存配置' : '配置已保存'}：${local.path}`, { status: local.text === null ? '创建' : '更新' });
   const agents = effectiveAgents(manifest, local);
   const rules = effectiveRules(manifest, local), appliedRules = new Set();
   if (!agents.length) {
-    if (options.mode === 'sync') initializeLocalSettings(local, log);
     log('生效 agents 为空，无需安装或检查。', { status: '跳过' });
     reportUnapplied(manifest, rules, appliedRules, dependencies, log);
     return;
   }
-  const dryrun = options.mode === 'dryrun';
   const names = deletedEntries(manifest, 'agents-md').map(({ name }) => name);
   const writes = prepareInstructionCleanup(names.length ? instructionPaths(agents, dependencies) : [], names);
   const deleted = deletedEntries(manifest, 'skill');
   const context = makeContext(dependencies, log, agents);
   checkSources(deleted, context);
-  applySkillRemoval(deleted, context, dryrun, log);
-  log('清理 sysprompt', { stage: true });
-  const cleanupFailures = applyInstructionCleanup(writes, dryrun, log);
+  log('清理 skill 和 sysprompt', { stage: true });
+  remove(deleted, context, dryrun);
+  const cleanupFailures = applyInstructionCleanup(writes, dryrun, log, '过期');
   check(!cleanupFailures.length, `sysprompt 清理失败：${cleanupFailures.join('\n')}`);
   log('下载源码', { stage: true });
   const plans = Object.entries(rules).map(([name, members]) => {
     const add = { ...parseArgs(['--local', '--add', `rule:${name}`]), members };
     const [plan] = resolvePlans({ ...manifest, 'sync-rules': { ...manifest['sync-rules'], [name]: members } }, add);
+    plan.unmet = [];
     try {
       plan.passed = RULE_CALLBACKS.get(name)({ explicit: false, platform: dependencies.platform ?? process.platform,
-        log: (message, metadata) => log(`[rule:${name}] ${message}`, metadata) });
+        log: (message, metadata) => log(`[rule:${name}] ${message}`, metadata), unmet: plan.unmet });
       if (plan.passed) checkSources(plan.entries.filter(({ type }) => type === 'skill'), context);
     } catch (error) { plan.error = error; }
     return plan;
@@ -1005,14 +1014,18 @@ function syncCatalog(options, dependencies, log) {
     }
     catch (error) { failures.push(`${name}: ${error.message}`); log(`[rule:${name}] 失败：${error.message}`, { status: '失败' }); }
   }
+  const retained = new Set(plans.filter(({ passed }) => passed !== false)
+    .flatMap(({ entries }) => entries.map(({ type, name }) => `${type}:${name}`)));
+  const removals = [...new Map(plans.filter(({ passed }) => passed === false).flatMap(({ entries }) => entries)
+    .filter(({ type, name }) => !retained.has(`${type}:${name}`)).map((entry) => [`${entry.type}:${entry.name}`, entry])).values()];
+  if (removals.length) {
+    try { executePlans([{ entries: removals }], { mode: 'del', dryrun }, agents, dependencies, log); }
+    catch (error) { failures.push(`清理未命中规则：${error.message}`); log(error.message, { status: '失败' }); }
+  }
   dependencies.cleanupRepositories();
   if (failures.length) {
     reportUnapplied(manifest, rules, appliedRules, dependencies, log);
     throw new Error(`规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
-  }
-  if (!dryrun) {
-    log('创建本地设置', { stage: true });
-    initializeLocalSettings(local, log);
   }
   log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。', { status: '完成' });
   reportUnapplied(manifest, rules, appliedRules, dependencies, log);

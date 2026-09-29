@@ -32,7 +32,7 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   run(['--dryrun']);
   assert.ok(!existsSync(home));
   run();
-  assert.ok(logs.some((line) => line === '[one] 通过'));
+  assert.ok(logs.some((line) => line === '[one] 跳过：第三方 skill'));
   for (const agent of ['.agents', '.codex', '.copilot']) {
     assert.match(readFileSync(join(home, agent, 'skills', 'one', 'SKILL.md'), 'utf8'), /Version one/);
     put(join(home, agent, 'skills', 'one', 'stale.txt'), 'stale');
@@ -46,12 +46,12 @@ test('real Git source fetch, dryrun, overwrite and deletion stay inside the sele
   }
   put(join(source, 'dryrun.mjs'), 'console.error("Missing fixture setting"); process.exitCode=1;');
   put(join(source, 'SKILL.md'), skillText('one', 'Version three'));
-  git(['add', '.']); git(['commit', '--quiet', '-m', 'Fail preflight']);
-  assert.throws(() => run(['--dryrun']), /环境检查失败/);
+  git(['add', '.']); git(['commit', '--quiet', '-m', 'Add unused third-party check']);
+  run(['--dryrun']);
   assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version two/);
   run();
   assert.match(readFileSync(join(home, '.agents', 'skills', 'one', 'SKILL.md'), 'utf8'), /Version three/);
-  assert.ok(logs.some((line) => line.startsWith('[警告]')));
+  assert.ok(!logs.some((line) => line.includes('Missing fixture setting')));
   run(['--local', '--del', 'skill:one']);
   assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(join(home, agent, 'skills', 'one'))));
   assert.ok(!readdirSync(root).some((name) => name.startsWith('eh-check-')));

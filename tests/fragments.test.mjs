@@ -83,7 +83,7 @@ test('download or target validation failures happen before skill installation or
   put(f.targets[1], '<!-- eh:one:start -->\nBroken');
   assert.throws(() => f.run(), /失败/);
   assert.equal(readFileSync(f.targets[0], 'utf8'), 'Personal content');
-  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
 });
 
 test('malformed, nested and duplicate markers fail; remote bodies cannot introduce markers', () => {
@@ -138,7 +138,7 @@ test('renamed fragment removes the old block before adding the new one, overridi
   const original = `Intro\n${block('old', 'Local edits')}\n${block('unmanaged', 'Keep')}\nEnd`;
   f.targets.forEach((path) => put(path, original));
   f.run(['--dryrun']);
-  assert.ok(f.logs.some((line) => line === `将移除 eh 标记块：${f.targets[0]}`));
+  assert.ok(f.logs.some((line) => line === `将移除 agents-md:old → ${f.targets[0]}`));
   assert.equal(readFileSync(f.targets[0], 'utf8'), original);
   f.run();
   for (const path of f.targets) {
