@@ -1,33 +1,29 @@
 # 开发约定
 
-## 目录与名称约定
+## 内容与导入
 
-- `eh` 是 `everything-harness` 的简称，用户指令中的 `eh` 均指本项目。
-- 自有 skill 放在 `skills/<skill-name>/SKILL.md`，常驻规则放在 `agents-md/<name>.md`；根目录 `AGENTS.md` 用于仓库开发。
-- `harness.json` 管理 `skill`、`agents-md`、`sync-rules` 和 `deleted`。活动 Skill 记录包含 `name`、GitHub `owner/repo` 来源 `source`；片段记录包含 `name`。同步成员关系集中在 `sync-rules`，每个键为规则名，值为 `[{"type_name":"skill:NAME"}]` 或片段类型名称的数组。删除记录使用 `type_name`，skill 必须保留 `source`，片段来源固定为 eh。同一条目不能同时存在于活动数组和 `deleted`，规则只能引用活动内容。
-- `--add` 接收一个或两个参数：单参数为 `type:name`，其中自有 skill 默认来源为 `Charbddlie/everything-harness`；双参数为 `owner/repo skill:name`。`agents-md:name` 和 `rule:name` 使用单参数。`--del` 可接收多个类型名称。`--add_agents`、`--del_agents` 沿用 agent 名称。
-- 每个同步规则在 `sync.mjs` 注册回调。`auto` 无额外条件，`win` 检测 Windows，`learn` 检测 Windows 和显式调用。检测函数集中复用，规则成员禁止嵌套规则。普通 sync 按清单顺序走同一个 `--add rule:name` 规划与执行入口，调用上下文标记为非显式。
-- 顶层 `agents` 统一设置所有 skill 和片段的目标，支持 `codex`、`github-copilot`，默认包含两者。
-- 本机配置位于 `~/.everything-harness/harness.json`，保存 `sync-rules` 成员覆盖和可选的顶层 `agents`；每个本机规则整份覆盖同名远程规则。Skill 共享正文由 skills 放在 `.agents/skills`；指定 `--home` 且规范化路径不同于用户主目录时，sync 另在该目录的 `.codex/skills`、`.copilot/skills` 中为生效 agents 接入选中内容。用户主目录不额外创建链接或副本，不自动清理已有入口。片段写入 `${CODEX_HOME:-~/.codex}/AGENTS.md` 或 `${COPILOT_HOME:-~/.copilot}/copilot-instructions.md`。
-- `--home <目录>` 覆盖本次内容根目录，默认用户主目录。显式目录优先于 agent 目录环境变量，统一控制 `.agents`、`.codex`、`.copilot`、`.everything-harness` 及安装和检查子进程的主目录；相对路径按启动目录解析，Git 发布沿用原身份与认证环境。
-- 片段标记统一使用 `<!-- eh:<name>:start -->` / `<!-- eh:<name>:end -->`。
+- `eh` 指本项目。Skill 源码放在 `skills/<name>/SKILL.md`，常驻规则放在 `agents-md/<name>.md`；本文件只用于仓库开发。
+- `npx skills` 只用于开发导入：在本项目根目录执行项目级安装，将 skill 下载到 `.agents/skills`，审阅、精简并处理脚本和资源后，加入 `skills/<name>`。不使用全局安装，不将下载缓存、锁文件或凭据提交到仓库。
+- 导入示例：`npx skills add <owner/repo> --skill <name> --agent codex --yes`。同步运行时不调用 `npx skills`。
+- 包含脚本的自有 skill 必须提供独立的 `dryrun.mjs`，仅检查环境与配置，不上传文件、不执行业务或调用计费 API。
 
-## sync 脚本的使用方式
+## 清单与同步
 
-使用 sync 前，参考 [skills/harness-manage/SKILL.md](skills/harness-manage/SKILL.md)，先确认当前 session 实际使用的 skill 安装目录；同步根目录为非用户主目录时，在命令中指定对应的 `--home`。远程入口、增删内容、同步开关、目标设置、状态查看和环境检查的操作说明统一维护在该文档中。
+- `harness.json` 管理全局 `agents`、`skill`、`agents-md`、`sync-rules` 和 `deleted`。Skill 记录仅含 `name`、GitHub `source`；片段仅含 `name`；规则成员和删除记录使用 `type_name`，删除 skill 保留来源。名称在同类中唯一，规则不嵌套、不引用删除项。
+- 支持 `codex`、`github-copilot`。规则回调集中注册：`auto` 无条件，`win` 检测 Windows，`learn` 检测 Windows 和显式调用。
+- `sync.mjs` 是同步入口，使用 Node.js 内置模块、Git 和 curl。读取远程 main 清单，按来源浅克隆：自有来源读取 main，第三方读取默认分支；自有 skill 位于 `skills/<name>`，第三方按 `SKILL.md` 查找，名称歧义或格式错误时报错。
+- 执行顺序为规则回调 → 下载 → 检查全部 skill → 覆盖已检查的同一份源码 → 写入片段。按规则汇总错误并继续后续规则；失败不保存本机设置，不掩盖原始错误。
+- 共享正文复制到 `<home>/.agents/skills/<name>`。仅当显式 `--home` 不同于用户主目录时，再复制到生效 agents 的 `.codex/skills`、`.copilot/skills`；用户主目录不额外建立入口。保留父目录链接，源码不接受链接或特殊文件。
+- 每个安装目录的 `.eh-source.json` 记录来源，覆盖和删除前校验。无标记的同名目录按清单选中处理；保留清单外内容和其他工具的锁文件。复制先准备完整副本，再替换目标；替换失败恢复原目录。
+- 删除只处理选中 skill 和 agents。自定义 home 保留未选中 agent 的副本及共享正文；用户主目录的共享正文须同时选择全部支持的 agents 才可删除。关闭同步不卸载内容。
+- `agents-md` 按生效 agents 写入 `.codex/AGENTS.md`、`.copilot/copilot-instructions.md`，包括 `home=~`。片段标记使用 `<!-- eh:<name>:start -->` / `<!-- eh:<name>:end -->`，写前校验全部目标，保留标记外内容和目标文件链接。
+- `--home` 控制内容、指令、本机配置和检查子进程的主目录；显式值优先于 agent 环境变量。Git 保留原身份和认证。运行前按当前 session 的实际 skill 路径确认同步根目录。
+- 本机 `.everything-harness/harness.json` 保存规则成员和可选的 agents 覆盖；每个规则整份覆盖远程。首次保存 `{"sync-rules":{}}`；读取其他受支持格式时保留原文件，成功后保存规范格式。`--list`、`--dryrun` 不修改正式安装和配置。
+- `--local` 只操作本机。远程清单变更在隔离副本中 commit / push，只提交清单及对应自有源码的删除；不改用户工作区、不强推。删除项长期保留，失败保留已完成操作和未推送改动。
+- `clean.mjs` 始终清理用户主目录，`--home` 增加目标。删除三个 agent 目录下清单活动项和删除项的同名 skill；清除根目录及 agent 目录指令文件的全部 eh 块，保留其他正文、配置和锁文件。提供 `--dryrun`，写前校验全部片段。
 
-## 项目的开发原则
+## 实现与验证
 
-- 保持轻量、简单、易读。仓库维护个人 skill 内容和清单；下载、共享正文安装与覆盖、锁文件交给 `npx skills` 管理。非用户主目录的显式 `--home` 的 agent 加载入口由 sync 按 CLI 返回的 `mode` 接入：copy 使用实体副本，symlink 使用相对软链接，链接失败时回退复制。仅处理本次选中 skill 和生效 agents，保留其他内容及已有父目录软链接。功能范围保持在内容维护与同步，不扩展 TUI、安装数据库、通用链接管理、来源分类、通配符或版本管理系统。
-- 内容发布流程为：修改本地仓库 → commit / push 到远程 → 运行 sync → 单向覆盖本机安装内容。检测通过的内容以远程正文覆盖，本机 JSON 保存规则成员与目标选择。
-- `sync.mjs` 是唯一同步入口，使用 Node.js 内置模块，通过系统的 `npx skills` 运行 CLI。所有入口读取远程 main 清单，安装和删除使用生效的全局 agents；面向用户提供远程入口。
-- 完整校验清单后执行规则。调用顺序为规则回调 → 检测函数 → 所有相关 skill 的 dryrun → 批量安装。规则条件未满足时跳过该规则；测试失败时保留该批正式安装，汇总错误并继续检查后续规则。添加单条内容复用相同测试与安装执行器。按来源分组安装，子进程使用结构化参数，保留清单外内容。
-- 片段写入前读取并校验所有选中正文和目标标记，格式错误时先报错。原位替换已有块，新块按清单顺序追加；保留标记外内容、关闭同步和清单外的块，以及目标文件已有软链接。
-- 删除自有 skill 时移除整个 `skills/<name>/`，删除片段时移除 `agents-md/<name>.md`，将活动记录移入顶层 `deleted`，保留类型名称及 skill 来源；改名另建新 entry 并移动正文。删除记录优先于本机开关，清理后长期保留，已删除名称保持禁用。清理 skill 前通过 `skills list` 校验来源，来源冲突时先报错。关闭同步时保留安装内容。
-- 本机规则成员和顶层 agents 覆盖远程默认，正文来源和删除状态始终取远程。首次同步创建 `{"sync-rules":{}}`；新文件缺失时迁入旧 `skills.json`、`agents-md.json` 的开关与全局 agents，保留旧文件备份，忽略旧 skill 级 agents。新文件存在后以新文件为准。
-- 旧本机 `skills` / `skill`、`fragments` / `agents-md` 中的 `auto_sync` 迁为规则成员覆盖。旧 true 优先沿用远程所属规则，未分组内容进入 auto；旧 false 从生效规则移除。同步或本机操作成功后保存新配置，列表和预检保持个人文件只读。新旧设置有歧义时先报错。本机残留的删除项或清单外引用在执行时忽略。
-- 远程清单修改在临时副本中完成，成功后提交 `harness.json`；删除操作同时提交对应自有 skill 目录或片段文件的删除，随后正常 push，保持用户工作区原状。第三方来源仓库保持不变。失败时保留已完成的本机操作和未推送改动，并提示重试。本机操作成功后才保存本机配置，Git 操作仅用于远程修改。
-- 自有 skill 包含可执行脚本时，在 skill 根目录提供独立的 `dryrun.mjs`。Dryrun 仅检查运行环境和必要配置，汇总可操作的错误并以非零状态退出；用户文件上传、业务操作和计费 API 调用均排除在检查范围外。
-- 添加前通过 `npx skills` 在隔离临时项目准备源码，逐个运行本批所有 skill 的 `dryrun.mjs`，第三方存在此入口时同样执行，完成全部检查后汇总错误。全部通过才覆盖正式安装并写片段；临时项目始终清理。规则删除跳过回调和 skill 测试，保留来源与目标标记校验。维护 skill 时同步维护 dryrun 和 `SKILL.md`。
-- Node.js ≥22.20.0；源文件使用 UTF-8 / LF。自有脚本优先使用 JavaScript 和 Node.js 内置模块，运行环境独立于项目 venv。
-- 验证使用 `node --test`；真实 CLI 安装测试使用隔离临时目录，保持个人 harness 配置不变。联网测试的失败或跳过应如实说明。
+- 保持代码和文档简洁，只描述当前设计，不记录修改过程。不扩展 TUI、安装数据库或通用链接管理。
+- Node.js ≥22.20.0，UTF-8 / LF。维护 skill 时同步维护 `SKILL.md` 和 dryrun；操作说明集中在 `skills/harness-manage/SKILL.md`。
+- 使用 `node --test`。安装、Git 发布和删除测试使用隔离目录；真实 GitHub 测试通过 `SKILLS_INTEGRATION=1` 启用。不得修改个人 harness 配置，如实说明联网或环境限制。

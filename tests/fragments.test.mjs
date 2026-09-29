@@ -19,7 +19,7 @@ function fixture(t) {
     stateDir: join(root, 'state'), homeDir: root, env: {},
     fetchManifest: () => JSON.stringify(manifest),
     fetchFragment: (name) => { reads.push(name); return content[name]; },
-    runSkills: () => assert.fail('No skill CLI needed for fragments'),
+    fetchRepository: () => assert.fail('No skill source needed for fragments'),
     runGit: () => assert.fail('No Git needed for local operations'),
     log: (message) => logs.push(message),
   };

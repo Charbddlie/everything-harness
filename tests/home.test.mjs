@@ -112,7 +112,7 @@ test('skill preflight receives the selected home and unchanged proxy configurati
   f.manifest.skill = [{ name: 'one', source: 'example/repo' }];
   f.manifest['sync-rules'].auto = [{ type_name: 'skill:one' }];
   let checked = false;
-  sync(['--home', f.destination, '--dryrun'], { ...f.dependencies, runSkills: () => '[]',
+  sync(['--home', f.destination, '--dryrun'], { ...f.dependencies,
     checkSkills: (entries, agents, dependencies) => {
       checked = true;
       assert.equal(dependencies.env.HOME, f.destination);

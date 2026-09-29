@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/harness.json`;
@@ -377,7 +377,7 @@ function effectiveRules(manifest, local) {
     .map(([rule, members]) => [rule, members.filter(({ type_name }) => active.has(type_name))]));
 }
 
-function writeAtomic(path, text) {
+export function writeAtomic(path, text) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try { writeFileSync(temporary, text, { flag: 'wx' }); renameSync(temporary, path); }
@@ -402,48 +402,19 @@ function parseJson(text, label) {
   try { return JSON.parse(text); } catch { throw new Error(`${label} 未返回有效 JSON。`); }
 }
 
-function installedSkills(text) {
-  const entries = parseJson(text, 'skills list');
-  check(Array.isArray(entries), 'skills list 应返回数组。');
-  const result = new Map();
-  for (const entry of entries) {
-    check(entry && typeof entry.name === 'string' && entry.scope === 'global' && typeof entry.path === 'string'
-      && Array.isArray(entry.agents) && entry.agents.every((agent) => typeof agent === 'string')
-      && (entry.source === null || typeof entry.source === 'string')
-      && (entry.sourceType === null || typeof entry.sourceType === 'string'), 'skills list 返回了无法识别的记录。');
-    check(!result.has(entry.name), `skills list 返回重复记录：${entry.name}`);
-    result.set(entry.name, entry);
-  }
-  return result;
-}
+const SOURCE_FILE = '.eh-source.json';
+const entryExists = (path) => Boolean(lstatSync(path, { throwIfNoEntry: false }));
 
-function sameSource(entry, source) {
-  return entry.sourceType === 'github' && entry.source?.toLowerCase() === source.toLowerCase();
-}
-
-function checkSources(entries, installed) {
+function checkSources(entries, context) {
   for (const entry of entries) {
-    const current = installed.get(entry.name);
-    if (current && !(current.source === null && current.sourceType === null)) {
-      check(sameSource(current, entry.source), `来源冲突：${entry.name} 已记录为 ${current.source} (${current.sourceType})，清单要求 ${entry.source}。`);
+    for (const directory of [context.sharedSkillsDir, ...Object.values(context.skillLoadDirs ?? {})]) {
+      const file = join(directory, entry.name, SOURCE_FILE);
+      if (!existsSync(file)) continue;
+      const { source } = parseJson(readFileSync(file, 'utf8'), file);
+      sourceName(source);
+      check(source.toLowerCase() === entry.source.toLowerCase(), `来源冲突：${file} 已记录为 ${source}，清单要求 ${entry.source}。`);
     }
   }
-}
-
-function hasAgent(entry, agent, sharedSkillsDir) {
-  // The CLI can omit undetected Codex/Copilot apps from list's display names.
-  return entry && (entry.agents.includes(AGENTS.get(agent))
-    || relative(sharedSkillsDir, dirname(entry.path)) === '');
-}
-
-function installationJobs(entries, agents) {
-  const jobs = new Map();
-  for (const entry of entries) {
-    const key = entry.source.toLowerCase();
-    if (!jobs.has(key)) jobs.set(key, { source: entry.source, names: [], agents });
-    jobs.get(key).names.push(entry.name);
-  }
-  return [...jobs.values()];
 }
 
 export function runCommand(command, args, options = {}) {
@@ -456,25 +427,59 @@ export function runCommand(command, args, options = {}) {
   return result.stdout ?? '';
 }
 
-export function npxCommand(platform = process.platform, env = process.env, executable = process.execPath) {
-  if (platform !== 'win32') return { command: 'npx', prefix: [] };
-  const pathValue = Object.entries(env).find(([key]) => key.toLowerCase() === 'path')?.[1] ?? '';
-  for (const directory of [...pathValue.split(delimiter), dirname(executable)].filter(Boolean)) {
-    for (const file of [join(directory, 'node_modules', 'npm', 'bin', 'npx-cli.js'), join(directory, 'npx')]) {
-      if (!existsSync(file)) continue;
-      const resolved = realpathSync(file);
-      if (resolved.endsWith('npx-cli.js')) return { command: executable, prefix: [resolved] };
+export function fetchRepository(source, path, dependencies = {}) {
+  sourceName(source);
+  const env = { ...(dependencies.gitEnv ?? dependencies.env ?? process.env), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+  runCommand('git', ['clone', '--quiet', '--depth=1', '--no-tags',
+    ...(source.toLowerCase() === OWN_SOURCE.toLowerCase() ? ['--branch', 'main'] : []),
+    '--', `https://github.com/${source}.git`, path], { env, timeout: 120_000 });
+}
+
+function skillMetadata(path) {
+  const text = readFileSync(join(path, 'SKILL.md'), 'utf8');
+  const header = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? '';
+  return {
+    name: header.match(/^name:\s*['"]?([a-z0-9-]+)['"]?\s*$/m)?.[1],
+    description: header.match(/^description:[ \t]*(\S.*)$/m)?.[1]?.replace(/^(['"])(.*)\1$/, '$2').trim(),
+  };
+}
+
+export function findSkill(repository, entry) {
+  const matches = [];
+  const visit = (path) => {
+    if (existsSync(join(path, 'SKILL.md'))) {
+      if (skillMetadata(path).name === entry.name || basename(path) === entry.name) matches.push(path);
+      return;
     }
-  }
-  throw new Error('找不到 npm 的 npx-cli.js；请安装 Node.js ≥22.20.0（含 npm/npx）并加入 PATH。');
+    for (const item of readdirSync(path, { withFileTypes: true })) {
+      if (item.isDirectory() && !['.git', 'node_modules', '.venv'].includes(item.name)) visit(join(path, item.name));
+    }
+  };
+  if (entry.source.toLowerCase() === OWN_SOURCE.toLowerCase()) {
+    const path = join(repository, 'skills', entry.name);
+    if (existsSync(join(path, 'SKILL.md'))) matches.push(path);
+  } else visit(repository);
+  check(matches.length === 1, `${entry.source} / ${entry.name}：${matches.length ? '找到多个同名 skill' : '未找到 SKILL.md'}。`);
+  const path = matches[0];
+  const location = relative(realpathSync(repository), realpathSync(path));
+  check(location.split(sep)[0] !== '..' && !isAbsolute(location),
+    `skill 目录不能位于来源仓库之外：${path}`);
+  const metadata = skillMetadata(path);
+  check(metadata.name === entry.name && metadata.description, `${path} 的 SKILL.md 必须包含匹配的 name 和非空 description。`);
+  const inspect = (directory) => {
+    for (const item of readdirSync(directory, { withFileTypes: true })) {
+      if (item.name === '.git') continue;
+      const child = join(directory, item.name);
+      check(!item.isSymbolicLink() && (item.isFile() || item.isDirectory()), `skill 不支持链接或特殊文件：${child}`);
+      if (item.isDirectory()) inspect(child);
+    }
+  };
+  check(!lstatSync(path).isSymbolicLink(), `skill 目录不能是链接：${path}`);
+  inspect(path);
+  return path;
 }
 
-export function createSkillsRunner({ env = process.env, cwd = process.cwd() } = {}) {
-  const { command, prefix } = npxCommand(process.platform, env);
-  return (args) => runCommand(command, [...prefix, '--yes', 'skills', ...args], { env, cwd });
-}
-
-function fetchManifest() {
+export function fetchManifest() {
   return fetchText(MANIFEST_URL);
 }
 
@@ -518,91 +523,62 @@ export function containsScripts(path) {
   });
 }
 
-// A home-scoped install keeps CLI-managed source and lock files, and exposes
-// only the selected skills in the session's agent-specific loading directories.
-export function exposeSkill(result, directories, { log = console.log, link = symlinkSync } = {}) {
-  skillName(result.name);
-  check(['copy', 'symlink'].includes(result.mode), `${result.name} 的安装结果缺少有效 mode。`);
-  const source = realpathSync(result.path);
-  for (const directory of directories) {
-    const target = join(directory, result.name);
-    if (existsSync(target) && realpathSync(target) === source
-      && (!lstatSync(target).isSymbolicLink() || result.mode === 'symlink')) continue;
-    mkdirSync(directory, { recursive: true });
-    const temporary = join(directory, `.${result.name}.${randomUUID()}.tmp`);
-    let mode = result.mode;
-    try {
-      if (mode === 'symlink') {
-        try { link(relative(realpathSync(directory), source), temporary, 'dir'); }
-        catch (error) {
-          rmSync(temporary, { recursive: true, force: true });
-          mode = 'copy';
-          log(`${result.name} 软链接失败，回退复制：${error.message}`);
-        }
-      }
-      if (mode === 'copy') cpSync(source, temporary, { recursive: true, dereference: true });
-      rmSync(target, { recursive: true, force: true });
-      renameSync(temporary, target);
-      log(`skill 加载入口（${mode}）：${target}`);
-    } finally { rmSync(temporary, { recursive: true, force: true }); }
-  }
+export function copySkill(entry, source, target) {
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = `${target}.${randomUUID()}.tmp`, backup = `${target}.${randomUUID()}.bak`;
+  let operationError;
+  try {
+    cpSync(source, temporary, { recursive: true, filter: (path) => basename(path) !== '.git' });
+    writeFileSync(join(temporary, SOURCE_FILE), JSON.stringify({ source: entry.source }) + '\n');
+    if (entryExists(target)) renameSync(target, backup);
+    try { renameSync(temporary, target); }
+    catch (error) {
+      if (entryExists(backup)) renameSync(backup, target);
+      throw error;
+    }
+    removeDirectory(backup);
+  } catch (error) {
+    operationError = error;
+    throw error;
+  } finally { removeDirectory(temporary, operationError); }
 }
 
-function skillLoadPaths(name, context) {
-  return context.skillLoadDirs ? context.agents.map((agent) => join(context.skillLoadDirs[agent], name)) : [];
-}
-
-const entryExists = (path) => Boolean(lstatSync(path, { throwIfNoEntry: false }));
-
-function install(entries, { runSkills, installed, agents, log, scope = 'global', skillLoadDirs }) {
-  checkSources(entries, installed);
-  const jobs = installationJobs(entries, agents);
-  for (const job of jobs) {
-    const label = `${job.source} / ${job.names.join(', ')} → ${job.agents.join(', ')}`;
-    log(`${scope === 'project' ? '临时准备源码' : '覆盖安装'}：${label}`);
-    try {
-      const results = parseJson(runSkills(['add', job.source, '--skill', ...job.names, '--agent', ...job.agents, ...(scope === 'global' ? ['-g'] : []), '--yes', '--json']), 'skills add');
-      check(Array.isArray(results), 'skills add 应返回数组。');
-      for (const name of job.names) {
-        const result = results.find((item) => item?.name === name);
-        check(result?.status === 'installed' && result.scope === scope && typeof result.path === 'string'
-          && Array.isArray(result.agents) && job.agents.every((agent) => result.agents.includes(AGENTS.get(agent))),
-        `${name} 未完成安装：${result?.error ?? result?.status ?? '缺少安装结果'}`);
-        installed.set(name, { ...result, source: job.source, sourceType: 'github' });
-        if (scope === 'global' && skillLoadDirs) exposeSkill(result, job.agents.map((agent) => skillLoadDirs[agent]), { log });
-      }
-    } catch (error) { throw new Error(`${label} 失败：${error.message}`); }
+function install(entries, prepared, context) {
+  const directories = [context.sharedSkillsDir,
+    ...context.agents.flatMap((agent) => context.skillLoadDirs ? [context.skillLoadDirs[agent]] : [])];
+  for (const entry of entries) {
+    const written = new Set();
+    for (const directory of directories) {
+      mkdirSync(directory, { recursive: true });
+      const target = join(realpathSync(directory), entry.name);
+      if (written.has(target)) continue;
+      copySkill(entry, prepared.get(entry.name).path, target);
+      written.add(target);
+      context.log(`覆盖安装：${entry.source} / ${entry.name} → ${target}`);
+    }
   }
 }
 
 function remove(entries, context) {
-  checkSources(entries, context.installed);
   for (const entry of entries) {
-    const targets = skillLoadPaths(entry.name, context);
-    if (!targets.some(entryExists) && !context.agents.some((agent) => hasAgent(context.installed.get(entry.name), agent, context.sharedSkillsDir))) {
-      context.log(`${entry.name} 的目标安装已不存在，继续更新设置。`);
-      continue;
+    const shared = join(context.sharedSkillsDir, entry.name);
+    const targets = context.skillLoadDirs
+      ? context.agents.map((agent) => join(context.skillLoadDirs[agent], entry.name)) : [shared];
+    const retained = context.skillLoadDirs
+      ? [...AGENTS.keys()].filter((agent) => !context.agents.includes(agent))
+        .map((agent) => join(context.skillLoadDirs[agent], entry.name)).filter(entryExists)
+      : context.agents.length < AGENTS.size && entryExists(shared) ? [shared] : [];
+    for (const target of targets) {
+      const aliasesRetained = entryExists(target) && !lstatSync(target).isSymbolicLink()
+        && retained.some((path) => existsSync(path) && realpathSync(path) === realpathSync(target));
+      check(!aliasesRetained, `${target} 的目标安装仍存在（由未选中 agent 共享），请同时选择所有共享 agents。`);
     }
-    context.log(`删除本机安装：${entry.name} → ${context.agents.join(', ')}`);
-    try {
-      const output = context.runSkills(['remove', entry.name, '-g', '--yes', '--agent', ...context.agents]);
-      if (output.trim()) context.log(output.trim());
-      const shared = join(context.sharedSkillsDir, entry.name);
-      for (const target of targets) {
-        // A pre-existing parent link may alias the shared directory. Let the
-        // CLI decide whether that shared content is still needed by an agent.
-        if (existsSync(target) && existsSync(shared) && !lstatSync(target).isSymbolicLink()
-          && realpathSync(target) === realpathSync(shared)) continue;
-        rmSync(target, { recursive: true, force: true });
-      }
-    } catch (error) { throw new Error(`${entry.source} / ${entry.name} 删除失败：${error.message}`); }
-  }
-  const remaining = installedSkills(context.runSkills(['list', '-g', '--json']));
-  for (const entry of entries) {
-    const stillInstalled = context.skillLoadDirs ? skillLoadPaths(entry.name, context).some(entryExists)
-      : context.agents.some((agent) => hasAgent(remaining.get(entry.name), agent, context.sharedSkillsDir));
-    check(!stillInstalled,
-      `${entry.name} 的目标安装仍存在（可能由其他 agent 共享），未修改设置或创建 commit。`);
+    for (const target of targets) {
+      removeDirectory(target);
+      context.log(`删除本机安装：${entry.name} → ${target}`);
+    }
+    if (context.skillLoadDirs && !retained.length) removeDirectory(shared);
+    check(targets.every((path) => !entryExists(path)), `${entry.name} 的目标安装仍存在，未修改设置或创建 commit。`);
   }
 }
 
@@ -682,7 +658,7 @@ export function changeManifest(manifest, options) {
   return { next: validateManifest(next), affected, plans };
 }
 
-function cleanupTemporaryDirectory(root, operationError) {
+export function removeDirectory(root, operationError) {
   let failedPath = root;
   const remove = (path) => {
     failedPath = path;
@@ -697,27 +673,34 @@ function cleanupTemporaryDirectory(root, operationError) {
   };
   try { remove(root); }
   catch (error) {
-    const message = `临时目录清理失败：${failedPath}；${error.message}`;
+    const message = `删除失败：${failedPath}；${error.message}`;
     if (operationError) throw new AggregateError([operationError, error], `${operationError.message}\n${message}`);
     throw new Error(message, { cause: error });
   }
 }
 
-// Stage the selected source using the same CLI in a disposable project. Tests
-// run before any global install so a failed batch leaves live content intact.
-export function checkSkills(entries, agents, dependencies, log) {
+export function checkSkills(entries, agents, dependencies, log, apply = () => {}) {
   if (!entries.length) return;
   const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'eh-check-'));
   let operationError;
   try {
-    const installed = new Map();
-    const runSkills = (dependencies.createCheckRunner ?? createSkillsRunner)({ env: dependencies.env, cwd: root });
-    install(entries, { runSkills, installed, agents, log, scope: 'project' });
-    (dependencies.runDryruns ?? runDryruns)(entries, installed, { log, env: dependencies.env });
+    const repositories = new Map(), prepared = new Map();
+    for (const entry of entries) {
+      const key = entry.source.toLowerCase();
+      if (!repositories.has(key)) {
+        const path = join(root, `source-${repositories.size}`);
+        log(`下载源码：${entry.source}`);
+        (dependencies.fetchRepository ?? fetchRepository)(entry.source, path, dependencies);
+        repositories.set(key, path);
+      }
+      prepared.set(entry.name, { path: findSkill(repositories.get(key), entry) });
+    }
+    (dependencies.runDryruns ?? runDryruns)(entries, prepared, { log, env: dependencies.env });
+    apply(prepared);
   } catch (error) {
     operationError = error;
     throw error;
-  } finally { cleanupTemporaryDirectory(root, operationError); }
+  } finally { removeDirectory(root, operationError); }
 }
 
 function executePlans(plans, options, agents, dependencies, log) {
@@ -737,10 +720,11 @@ function executePlans(plans, options, agents, dependencies, log) {
       : { 'agents-md': fragments.map(({ name }) => ({ name })) };
     const writes = prepareFragments({ manifest }, agents, dependencies);
     const context = skills.length ? makeContext(dependencies, log, agents) : null;
-    if (context) checkSources(skills, context.installed);
+    if (context) checkSources(skills, context);
     if (options.mode === 'add') {
-      (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log);
-      if (context && !options.dryrun) install(skills, context);
+      (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log, (prepared) => {
+        if (context && !options.dryrun) install(skills, prepared, context);
+      });
     } else if (context) {
       for (const entry of skills) log(`skill 待删除：${entry.name}；${options.dryrun ? '同步时将自动删除' : '正在清理'}对应安装。`);
       if (!options.dryrun) remove(skills, context);
@@ -787,7 +771,7 @@ function manageManifest(options, dependencies, log) {
     operationError = new Error(`${error.message}${keep ? `\n操作副本已保留：${root}` : ''}\n修复问题后重新运行同一条命令，脚本会自动重新读取清单并处理 Git。`, { cause: error });
     throw operationError;
   } finally {
-    if (!keep) cleanupTemporaryDirectory(root, operationError);
+    if (!keep) removeDirectory(root, operationError);
   }
 }
 
@@ -825,9 +809,7 @@ function applyManifestChange(options, dependencies, log, root, git, before, sour
 
 function makeContext(dependencies, log, agents) {
   check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
-  const runSkills = dependencies.runSkills ?? createSkillsRunner({ env: dependencies.env, cwd: dependencies.cwd });
-  return { runSkills, installed: installedSkills(runSkills(['list', '-g', '--json'])),
-    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'),
+  return { sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'),
     skillLoadDirs: dependencies.skillLoadDirs, agents, log };
 }
 

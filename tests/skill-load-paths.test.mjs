@@ -1,147 +1,118 @@
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { exposeSkill, homeDependencies, sync } from '../sync.mjs';
+import { copySkill, sync } from '../sync.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
+const text = '---\nname: one\ndescription: Test skill.\n---\nVersion one\n';
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'eh-load-paths-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const home = join(root, 'home');
-  const source = join(home, '.agents', 'skills', 'one');
-  const dirs = [join(home, '.codex', 'skills'), join(home, '.copilot', 'skills')];
-  put(join(source, 'SKILL.md'), 'Version one');
-  put(join(source, 'scripts', 'run.mjs'), 'console.log("one");');
-  return { root, home, source, dirs, result: { name: 'one', path: source, mode: 'copy' } };
+  const home = join(root, 'home'), source = join(root, 'source');
+  const entry = { name: 'one', source: 'example/repo' };
+  put(join(source, 'SKILL.md'), text);
+  const manifest = { agents: ['codex', 'github-copilot'], skill: [entry], 'sync-rules': { auto: [{ type_name: 'skill:one' }] } };
+  const dependencies = {
+    homeDir: home, tempDir: root, env: {}, log() {}, fetchManifest: () => JSON.stringify(manifest),
+    fetchRepository: (source, path) => put(join(path, 'skills', 'one', 'SKILL.md'), text),
+  };
+  return { root, home, source, entry, manifest, dependencies,
+    shared: join(home, '.agents', 'skills', 'one'),
+    target: (agent) => join(home, agent, 'skills', 'one'),
+    run: (args = []) => sync(args, dependencies) };
 }
 
-test('copy mode creates independent native directories and only replaces selected skills and agents', (t) => {
-  const f = fixture(t);
-  exposeSkill(f.result, f.dirs, { log() {} });
-  for (const dir of f.dirs) {
-    assert.ok(!lstatSync(join(dir, 'one')).isSymbolicLink());
-    assert.equal(readFileSync(join(dir, 'one', 'SKILL.md'), 'utf8'), 'Version one');
-    assert.ok(existsSync(join(dir, 'one', 'scripts', 'run.mjs')));
-    put(join(dir, 'one', 'stale.txt'), 'stale');
-    put(join(dir, 'unmanaged', 'SKILL.md'), 'keep');
-  }
-  put(join(f.source, 'SKILL.md'), 'Version two');
-  exposeSkill(f.result, [f.dirs[0]], { log() {} });
-  assert.equal(readFileSync(join(f.dirs[0], 'one', 'SKILL.md'), 'utf8'), 'Version two');
-  assert.ok(!existsSync(join(f.dirs[0], 'one', 'stale.txt')));
-  assert.equal(readFileSync(join(f.dirs[1], 'one', 'SKILL.md'), 'utf8'), 'Version one');
-  assert.ok(existsSync(join(f.dirs[1], 'one', 'stale.txt')));
-  assert.ok(f.dirs.every((dir) => readFileSync(join(dir, 'unmanaged', 'SKILL.md'), 'utf8') === 'keep'));
-  const moved = join(f.root, 'moved'); renameSync(f.home, moved);
-  assert.equal(readFileSync(join(moved, '.codex', 'skills', 'one', 'SKILL.md'), 'utf8'), 'Version two');
+test('copy prepares a complete replacement, removes stale files and records the source', (t) => {
+  const f = fixture(t), target = join(f.root, 'installed', 'one');
+  put(join(f.source, 'scripts', 'run.mjs'), 'console.log("one");');
+  put(join(f.source, '.git', 'config'), 'not skill content');
+  put(join(target, 'stale.txt'), 'stale');
+  copySkill(f.entry, f.source, target);
+  assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), text);
+  assert.ok(existsSync(join(target, 'scripts', 'run.mjs')));
+  assert.ok(!existsSync(join(target, 'stale.txt')));
+  assert.ok(!existsSync(join(target, '.git')));
+  assert.deepEqual(JSON.parse(readFileSync(join(target, '.eh-source.json'))), { source: 'example/repo' });
 });
 
-test('symlink mode uses relative links that survive moving the whole home', { skip: process.platform === 'win32' }, (t) => {
-  const f = fixture(t);
-  exposeSkill({ ...f.result, mode: 'symlink' }, f.dirs, { log() {} });
-  for (const dir of f.dirs) {
-    const target = join(dir, 'one');
-    assert.ok(lstatSync(target).isSymbolicLink());
-    assert.ok(!isAbsolute(readlinkSync(target)));
-    assert.equal(realpathSync(target), realpathSync(f.source));
-  }
-  const moved = join(f.root, 'moved'); renameSync(f.home, moved);
-  put(join(moved, '.agents', 'skills', 'one', 'SKILL.md'), 'Moved');
-  for (const dir of ['.codex', '.copilot']) assert.equal(readFileSync(join(moved, dir, 'skills', 'one', 'SKILL.md'), 'utf8'), 'Moved');
-});
-
-test('symlink creation failure falls back to copy and reports the fallback', (t) => {
-  const f = fixture(t), logs = [];
-  exposeSkill({ ...f.result, mode: 'symlink' }, f.dirs, { log: (line) => logs.push(line), link() { throw new Error('EPERM'); } });
-  assert.equal(logs.filter((line) => line.includes('回退复制')).length, 2);
-  assert.ok(f.dirs.every((dir) => !lstatSync(join(dir, 'one')).isSymbolicLink()));
-  assert.ok(f.dirs.every((dir) => readFileSync(join(dir, 'one', 'SKILL.md'), 'utf8') === 'Version one'));
-});
-
-test('copy mode replaces an old symlink without changing its previous target', { skip: process.platform === 'win32' }, (t) => {
-  const f = fixture(t), outside = join(f.root, 'outside');
-  put(join(outside, 'SKILL.md'), 'Keep outside');
-  mkdirSync(f.dirs[0], { recursive: true }); symlinkSync(outside, join(f.dirs[0], 'one'), 'dir');
-  exposeSkill(f.result, [f.dirs[0]], { log() {} });
-  assert.equal(readFileSync(join(outside, 'SKILL.md'), 'utf8'), 'Keep outside');
-  assert.ok(!lstatSync(join(f.dirs[0], 'one')).isSymbolicLink());
-  exposeSkill({ ...f.result, mode: 'symlink' }, f.dirs, { log() {} });
-  exposeSkill(f.result, f.dirs, { log() {} });
-  assert.ok(f.dirs.every((dir) => !lstatSync(join(dir, 'one')).isSymbolicLink()));
-});
-
-test('missing CLI mode fails before replacing existing native content', (t) => {
-  const f = fixture(t); put(join(f.dirs[0], 'one', 'SKILL.md'), 'Keep');
-  assert.throws(() => exposeSkill({ ...f.result, mode: undefined }, f.dirs), /mode/);
-  assert.equal(readFileSync(join(f.dirs[0], 'one', 'SKILL.md'), 'utf8'), 'Keep');
-});
-
-test('existing parent links are preserved when they already expose shared content', { skip: process.platform === 'win32' }, (t) => {
-  const f = fixture(t); mkdirSync(dirname(f.dirs[0]), { recursive: true });
-  symlinkSync(dirname(f.source), f.dirs[0], 'dir');
-  exposeSkill(f.result, [f.dirs[0]], { log() {} });
-  assert.ok(lstatSync(f.dirs[0]).isSymbolicLink());
-  assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), 'Version one');
-});
-
-test('home-scoped deletion clears selected native endpoints while the CLI retains shared data for another agent', (t) => {
-  const f = fixture(t); exposeSkill(f.result, f.dirs, { log() {} });
-  const metadata = [{ name: 'one', path: f.source, scope: 'global', source: 'example/repo', sourceType: 'github', agents: ['Codex', 'GitHub Copilot'] }];
-  const manifest = { agents: ['codex'], skill: [{ name: 'one', source: 'example/repo' }], 'sync-rules': { auto: [{ type_name: 'skill:one' }] } };
-  let removed = false;
-  const dependencies = { env: {}, fetchManifest: () => JSON.stringify(manifest), log() {},
-    runSkills: (args) => {
-      if (args[0] === 'list') return JSON.stringify(metadata);
-      assert.deepEqual(args, ['remove', 'one', '-g', '--yes', '--agent', 'codex']); removed = true; return '';
-    },
-  };
-  sync(['--home', f.home, '--local', '--del', 'skill:one'], dependencies);
-  assert.ok(removed);
-  assert.ok(!existsSync(join(f.dirs[0], 'one')));
-  assert.ok(existsSync(join(f.dirs[1], 'one', 'SKILL.md')));
-  assert.ok(existsSync(join(f.source, 'SKILL.md')));
-  assert.deepEqual(JSON.parse(readFileSync(join(f.home, '.everything-harness', 'harness.json')))['sync-rules'].auto, []);
-});
-
-for (const mode of ['copy', 'symlink']) {
-  test(`user home sync does not add ${mode} endpoints or replace existing ones`, (t) => {
-    const f = fixture(t);
-    const manifest = { agents: ['codex', 'github-copilot'], skill: [{ name: 'one', source: 'example/repo' }],
-      'sync-rules': { auto: [{ type_name: 'skill:one' }] } };
-    let installs = 0;
-    const dependencies = {
-      homeDir: f.home, env: {}, fetchManifest: () => JSON.stringify(manifest), log() {}, checkSkills() {},
-      runSkills: (args) => {
-        if (args[0] === 'list') return '[]';
-        assert.equal(args[0], 'add');
-        installs++;
-        return JSON.stringify([{ ...f.result, mode, status: 'installed', scope: 'global', agents: ['Codex', 'GitHub Copilot'] }]);
-      },
-    };
-    sync(['--home', '~'], dependencies);
-    assert.equal(installs, 1);
-    assert.ok(f.dirs.every((dir) => !existsSync(dir)));
-    for (const dir of f.dirs) put(join(dir, 'one', 'SKILL.md'), 'Existing entry');
-    sync(['--home', f.home], dependencies);
-    assert.equal(installs, 2);
-    assert.ok(f.dirs.every((dir) => readFileSync(join(dir, 'one', 'SKILL.md'), 'utf8') === 'Existing entry'));
-    assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), 'Version one');
+test('failed replacement restores the existing directory', (t) => {
+  const f = fixture(t), target = join(f.root, 'installed', 'one');
+  put(join(target, 'SKILL.md'), 'Keep');
+  const originalRename = fs.renameSync;
+  const mock = t.mock.method(fs, 'renameSync', (from, to) => {
+    if (from.endsWith('.tmp') && to === target) throw new Error('rename denied');
+    return originalRename(from, to);
   });
-}
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => copySkill(f.entry, f.source, target), /rename denied/);
+    assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), 'Keep');
+  } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+});
 
-test('source conflict and CLI failure preserve the native entries and local settings', (t) => {
-  const f = fixture(t); exposeSkill(f.result, f.dirs, { log() {} });
-  const manifest = { agents: ['codex'], skill: [{ name: 'one', source: 'example/repo' }] };
-  const metadata = { name: 'one', path: f.source, scope: 'global', source: 'other/repo', sourceType: 'github', agents: ['Codex'] };
-  const dependencies = { env: {}, fetchManifest: () => JSON.stringify(manifest), log() {},
-    runSkills: (args) => args[0] === 'list' ? JSON.stringify([metadata]) : (() => { throw new Error('CLI failed'); })(),
-  };
-  assert.throws(() => sync(['--home', f.home, '--local', '--del', 'skill:one'], dependencies), /来源冲突/);
-  metadata.source = 'example/repo';
-  assert.throws(() => sync(['--home', f.home, '--local', '--del', 'skill:one'], dependencies), /CLI failed/);
-  assert.ok(f.dirs.every((dir) => existsSync(join(dir, 'one', 'SKILL.md'))));
-  assert.ok(!existsSync(join(f.home, '.everything-harness', 'harness.json')));
-  assert.equal(homeDependencies(undefined, dependencies).skillLoadDirs, undefined);
+test('replacing a directory link leaves its previous target intact', (t) => {
+  const f = fixture(t), target = join(f.root, 'linked');
+  symlinkSync(f.source, target, process.platform === 'win32' ? 'junction' : 'dir');
+  copySkill(f.entry, f.source, target);
+  assert.ok(!lstatSync(target).isSymbolicLink());
+  assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), text);
+});
+
+test('user home only gets shared skills while both agents receive instruction fragments', (t) => {
+  const f = fixture(t);
+  f.manifest['agents-md'] = [{ name: 'base' }];
+  f.manifest['sync-rules'].auto.push({ type_name: 'agents-md:base' });
+  f.dependencies.fetchFragment = () => 'Instructions';
+  for (const home of ['~', f.home]) {
+    f.run(['--home', home]);
+    assert.ok(existsSync(join(f.shared, 'SKILL.md')));
+    assert.ok(!existsSync(f.target('.codex')));
+    assert.ok(!existsSync(f.target('.copilot')));
+    assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
+    assert.match(readFileSync(join(f.home, '.copilot', 'copilot-instructions.md'), 'utf8'), /Instructions/);
+  }
+});
+
+test('custom home copies selected endpoints and scoped deletion preserves other agents', (t) => {
+  const f = fixture(t), home = join(f.root, 'custom');
+  const target = (agent) => join(home, agent, 'skills', 'one');
+  f.run(['--home', home]);
+  for (const agent of ['.agents', '.codex', '.copilot']) {
+    assert.ok(!lstatSync(target(agent)).isSymbolicLink());
+    assert.equal(readFileSync(join(target(agent), 'SKILL.md'), 'utf8'), text);
+  }
+  f.run(['--home', home, '--local', '--del_agents', 'github-copilot']);
+  f.run(['--home', home, '--local', '--del', 'skill:one']);
+  assert.ok(!existsSync(target('.codex')));
+  assert.ok(existsSync(target('.copilot')));
+  assert.ok(existsSync(target('.agents')));
+  f.run(['--home', home, '--local', '--add_agents', 'github-copilot']);
+  f.run(['--home', home, '--local', '--del', 'skill:one']);
+  assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(target(agent))));
+  assert.ok(!existsSync(f.home));
+});
+
+test('shared user-home deletion requires all supported agents', (t) => {
+  const f = fixture(t); f.run();
+  f.run(['--local', '--del_agents', 'github-copilot']);
+  assert.throws(() => f.run(['--local', '--del', 'skill:one']), /共享/);
+  assert.ok(existsSync(f.shared));
+  f.run(['--local', '--add_agents', 'github-copilot']);
+  f.run(['--local', '--del', 'skill:one']);
+  assert.ok(!existsSync(f.shared));
+});
+
+test('existing parent directory links are preserved', (t) => {
+  const f = fixture(t), home = join(f.root, 'custom'), shared = join(home, '.agents', 'skills');
+  mkdirSync(shared, { recursive: true });
+  mkdirSync(join(home, '.codex'), { recursive: true });
+  const link = join(home, '.codex', 'skills');
+  symlinkSync(shared, link, process.platform === 'win32' ? 'junction' : 'dir');
+  f.run(['--home', home]);
+  assert.ok(lstatSync(link).isSymbolicLink());
+  assert.equal(realpathSync(link), realpathSync(shared));
+  assert.equal(readFileSync(join(link, 'one', 'SKILL.md'), 'utf8'), text);
 });

@@ -4,12 +4,13 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { AGENTS, OWN_SOURCE, RULE_CALLBACKS, RULE_CHECKS, changeManifest, checkSkills, parseArgs, sync, validateManifest } from '../sync.mjs';
+import { OWN_SOURCE, RULE_CALLBACKS, RULE_CHECKS, changeManifest, checkSkills, parseArgs, sync, validateManifest } from '../sync.mjs';
 
 const member = (type_name) => ({ type_name });
 const skill = (name, source = OWN_SOURCE) => ({ name, source });
 const block = (name, body) => `<!-- eh:${name}:start -->\n${body}\n<!-- eh:${name}:end -->`;
 const put = (path, value) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, value); };
+const skillText = (name) => `---\nname: ${name}\ndescription: Test skill.\n---\n`;
 
 function fixture(t, manifest = {
   agents: ['codex', 'github-copilot'],
@@ -19,31 +20,36 @@ function fixture(t, manifest = {
 }) {
   const root = mkdtempSync(join(tmpdir(), 'eh-rules-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const calls = [], events = [], logs = [], installed = new Map();
+  const calls = [], events = [], logs = [];
+  const shared = join(root, '.agents', 'skills');
+  const seed = (name, source = OWN_SOURCE) => {
+    put(join(shared, name, 'SKILL.md'), skillText(name));
+    put(join(shared, name, '.eh-source.json'), JSON.stringify({ source }));
+  };
   const settings = join(root, 'state', 'harness.json');
   const target = join(root, '.codex', 'AGENTS.md');
   const dependencies = {
-    stateDir: dirname(settings), homeDir: root, env: {}, platform: 'linux',
+    stateDir: dirname(settings), homeDir: root, tempDir: root, env: {}, platform: 'linux',
     fetchManifest: () => JSON.stringify(manifest),
     fetchFragment: (name) => { events.push(`body:${name}`); return `Body ${name}`; },
-    log: (message) => { logs.push(message); events.push(message); },
-    checkSkills: (entries) => { for (const entry of entries) events.push(`test:${entry.name}`); },
-    runSkills: (args) => {
-      calls.push(args);
-      if (args[0] === 'list') return JSON.stringify([...installed.values()]);
-      if (args[0] === 'remove') { events.push(`del:${args[1]}`); installed.delete(args[1]); return ''; }
-      const names = args.slice(args.indexOf('--skill') + 1, args.indexOf('--agent'));
-      const agents = args.slice(args.indexOf('--agent') + 1, args.indexOf('-g')).map((name) => AGENTS.get(name));
-      return JSON.stringify(names.map((name) => {
-        events.push(`add:${name}`);
-        const record = { name, source: args[1], sourceType: 'github', scope: 'global', path: join(root, 'installed', name), agents };
-        installed.set(name, record);
-        return { ...record, status: 'installed' };
-      }));
+    log: (message) => {
+      logs.push(message); events.push(message);
+      const add = message.match(/^覆盖安装：(\S+) \/ (\S+) →/), del = message.match(/^删除本机安装：(\S+) →/);
+      if (add) { calls.push(['add', add[1], add[2]]); events.push(`add:${add[2]}`); }
+      if (del) { calls.push(['remove', del[1]]); events.push(`del:${del[1]}`); }
     },
+    fetchRepository: (source, path) => {
+      for (const { name } of manifest.skill.filter((entry) => entry.source === source)) {
+        put(join(path, 'skills', name, 'SKILL.md'), skillText(name));
+      }
+    },
+    runDryruns: (entries) => { for (const entry of entries) events.push(`test:${entry.name}`); },
     runGit: () => assert.fail('Local operations must not use Git'),
   };
-  return { root, manifest, installed, calls, events, logs, settings, target, dependencies,
+  return { root, manifest, seed, calls, events, logs, settings, target, dependencies,
+    get installed() {
+      return new Map((existsSync(shared) ? readdirSync(shared) : []).map((name) => [name, { path: join(shared, name) }]));
+    },
     read: () => JSON.parse(readFileSync(settings, 'utf8')),
     run: (args = []) => sync(args, dependencies) };
 }
@@ -95,8 +101,7 @@ test('harness-manage replaces skill-manage and removes the old installation desp
   assert.ok(!existsSync(new URL('../skills/skill-manage/SKILL.md', import.meta.url)));
   const f = fixture(t, manifest);
   for (const name of ['skill-manage', 'unmanaged']) {
-    f.installed.set(name, { name, source: OWN_SOURCE, sourceType: 'github', scope: 'global',
-      path: join(f.root, 'installed', name), agents: ['Codex', 'GitHub Copilot'] });
+    f.seed(name);
   }
   put(f.settings, JSON.stringify({ 'sync-rules': { auto: [member('skill:skill-manage'), member('skill:harness-manage')] } }));
   f.run();
@@ -185,13 +190,13 @@ test('rule deletion bypasses callbacks and tests and local add restores the comp
   const f = fixture(t); f.dependencies.platform = 'win32';
   f.run(['--local', '--add', 'rule:learn']);
   f.dependencies.platform = 'linux'; f.events.length = 0;
-  f.dependencies.checkSkills = () => assert.fail('Deletion must not test skills');
+  f.dependencies.runDryruns = () => assert.fail('Deletion must not test skills');
   f.run(['--local', '--del', 'rule:learn']);
   assert.equal(f.installed.size, 0);
   assert.deepEqual(f.read()['sync-rules'].learn, []);
   assert.ok(!f.events.some((event) => event.startsWith('规则回调')));
   assert.ok(!f.events.some((event) => event.startsWith('检测 ')));
-  f.dependencies.platform = 'win32'; f.dependencies.checkSkills = () => {};
+  f.dependencies.platform = 'win32'; f.dependencies.runDryruns = () => {};
   f.run(['--local', '--add', 'rule:learn']);
   assert.equal(f.installed.size, 2);
   assert.equal(f.manifest['sync-rules'].learn.length, 2);
@@ -200,7 +205,7 @@ test('rule deletion bypasses callbacks and tests and local add restores the comp
 test('a failed skill test leaves the entire group and local settings untouched', (t) => {
   const f = fixture(t); f.dependencies.platform = 'win32';
   put(f.settings, '{"sync-rules":{}}');
-  f.dependencies.checkSkills = (entries) => {
+  f.dependencies.runDryruns = (entries) => {
     assert.deepEqual(entries.map(({ name }) => name), ['paper', 'zotero']);
     throw new Error('skill test failed');
   };
@@ -211,7 +216,7 @@ test('a failed skill test leaves the entire group and local settings untouched',
 
 test('sync continues through all rules after a failure and reports the aggregate', (t) => {
   const f = fixture(t); f.dependencies.platform = 'win32';
-  f.dependencies.checkSkills = (entries) => { if (entries.length) throw new Error('core failure'); };
+  f.dependencies.runDryruns = (entries) => { if (entries.length) throw new Error('core failure'); };
   assert.throws(() => f.run(), /auto: core failure/);
   assert.ok(f.events.includes('规则回调：rule:learn'));
   assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:'));
@@ -335,16 +340,13 @@ test('compatibility auto_sync changes membership without adding flags or install
 test('preflight stages source in a temporary project, tests all skills and cleans it on failure', (t) => {
   const f = fixture(t); const paths = [], logs = [];
   const dependencies = { env: {}, tempDir: f.root,
-    createCheckRunner: ({ cwd }) => {
-      paths.push(cwd);
-      return (args) => {
-        assert.ok(!args.includes('-g'));
-        return JSON.stringify(args.slice(args.indexOf('--skill') + 1, args.indexOf('--agent')).map((name) => {
-          const path = join(cwd, '.agents', 'skills', name);
-          put(join(path, 'dryrun.mjs'), `console.error('failure-${name}'); process.exitCode = 1;`);
-          return { name, status: 'installed', scope: 'project', path, agents: ['Codex'] };
-        }));
-      };
+    fetchRepository: (source, repository) => {
+      paths.push(dirname(repository));
+      for (const name of ['paper', 'zotero']) {
+        const path = join(repository, 'skills', name);
+        put(join(path, 'SKILL.md'), skillText(name));
+        put(join(path, 'dryrun.mjs'), `console.error('failure-${name}'); process.exitCode = 1;`);
+      }
     },
   };
   assert.throws(() => checkSkills([skill('paper'), skill('zotero')], ['codex'], dependencies, (line) => logs.push(line)), /2 个 skill/);
@@ -362,13 +364,12 @@ for (const blockedType of ['file', 'directory']) for (const failCheck of [false,
     const cleanup = Object.assign(new Error('EPERM, Permission denied'), { code: 'EPERM' });
     const dependencies = {
       tempDir: f.root,
-      createCheckRunner: ({ cwd }) => {
-        root = cwd;
-        const path = join(cwd, '.agents', 'skills', 'core');
+      fetchRepository: (source, repository) => {
+        root = dirname(repository);
+        const path = join(repository, 'skills', 'core');
         const file = join(path, 'SKILL.md');
-        put(file, 'fixture');
+        put(file, skillText('core'));
         blocked = blockedType === 'file' ? file : path;
-        return () => JSON.stringify([{ name: 'core', status: 'installed', scope: 'project', path, agents: ['Codex'] }]);
       },
       runDryruns: () => { if (failCheck) throw primary; },
     };
@@ -385,7 +386,7 @@ for (const blockedType of ['file', 'directory']) for (const failCheck of [false,
     syncBuiltinESMExports();
     try {
       assert.throws(() => checkSkills([skill('core')], ['codex'], dependencies, () => {}), (error) => {
-        assert.ok(error.message.includes(`临时目录清理失败：${blocked}；`));
+        assert.ok(error.message.includes(`删除失败：${blocked}；`));
         assert.ok(error.message.includes('EPERM'));
         if (failCheck) {
           assert.ok(error.message.includes(primary.message));
@@ -408,10 +409,10 @@ test('preflight cleanup removes directory links without touching their targets',
   let root;
   checkSkills([skill('core')], ['codex'], {
     tempDir: f.root,
-    createCheckRunner: ({ cwd }) => {
-      root = cwd;
-      symlinkSync(target, join(cwd, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
-      return () => JSON.stringify([{ name: 'core', status: 'installed', scope: 'project', path: target, agents: ['Codex'] }]);
+    fetchRepository: (source, repository) => {
+      root = dirname(repository);
+      symlinkSync(target, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+      put(join(repository, 'skills', 'core', 'SKILL.md'), skillText('core'));
     },
     runDryruns: () => {},
   }, () => {});
@@ -438,7 +439,7 @@ test('remote checkout cleanup reports the blocked file without masking the Git e
     assert.throws(() => f.run(['--add_agents', 'codex']), (error) => {
       assert.ok(error.message.includes('original Git failure'));
       assert.ok(error.message.includes('重新运行同一条命令'));
-      assert.ok(error.message.includes(`临时目录清理失败：${blocked}；`));
+      assert.ok(error.message.includes(`删除失败：${blocked}；`));
       return true;
     });
   } finally {
@@ -450,15 +451,15 @@ test('remote checkout cleanup reports the blocked file without masking the Git e
 test('source conflicts, test failures and concurrent settings edits preserve local configuration', (t) => {
   const f = fixture(t);
   f.run(['--local', '--add', 'skill:core']);
-  f.installed.get('core').source = 'other/repo';
+  put(join(f.installed.get('core').path, '.eh-source.json'), '{"source":"other/repo"}');
   const original = readFileSync(f.settings, 'utf8');
   f.events.length = 0;
   assert.throws(() => f.run(['--local', '--del', 'rule:auto']), /来源冲突/);
   assert.equal(readFileSync(f.settings, 'utf8'), original);
   assert.ok(!f.events.some((event) => event.startsWith('test:') || event.startsWith('del:')));
-  f.installed.get('core').source = OWN_SOURCE;
+  put(join(f.installed.get('core').path, '.eh-source.json'), JSON.stringify({ source: OWN_SOURCE }));
   const concurrent = '{"agents":["codex"],"sync-rules":{}}';
-  f.dependencies.checkSkills = () => put(f.settings, concurrent);
+  f.dependencies.runDryruns = () => put(f.settings, concurrent);
   assert.throws(() => f.run(['--local', '--add', 'skill:core']), /操作期间本机设置已被修改/);
   assert.equal(readFileSync(f.settings, 'utf8'), concurrent);
 });

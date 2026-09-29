@@ -1,30 +1,23 @@
 ---
 name: harness-manage
-description: 管理 eh（everything-harness）的 skill、AGENTS.md 片段和同步规则；确认当前 session 的 skill 目录后，使用远程 sync.mjs 安装、删除、检测环境及设置全局 agents。
+description: 管理 eh 的 skill、指令片段和同步规则；确认 session 的安装根目录后，使用远程 sync.mjs 同步、检查、增删内容及设置 agents。
 ---
 
 # Harness 管理
 
-`eh` 是 `everything-harness` 的简称。源码在本仓库维护，发布流程为：修改源码 → commit / push → 远程 sync → 单向覆盖本机内容。用户要求先审阅或暂缓发布时，保留改动等待确认。
+`eh` 指 everything-harness。源码发布到 GitHub 后，由 `sync.mjs` 单向覆盖安装。需要 Node.js ≥22.20.0、Git 和 curl；运行时直接下载、检查和复制目录。
 
-执行安装、删除或配置修改前，先明确范围：带 `--local` 操作本机安装与规则覆盖；省略时修改远程清单并 commit / push。范围不明确时先询问。“本地的 skill”也可能指待发布源码，需要确认具体范围。
+## 确认范围
 
-## 确认当前 session 的同步位置
+执行前从当前 session 的 skill 清单、实际 `SKILL.md` 路径和 agent 环境变量确定同步根目录。`.agents/skills`、`.codex/skills`、`.copilot/skills` 的所属根目录才是内容 home，源码仓库的 `skills` 不能作为安装位置的依据。
 
-执行同步指令前，先确认当前 session 实际使用的 skill 目录，再生成命令：
+- 根目录为用户主目录时可省略 `--home`；其他位置必须传入 `--home "<绝对目录>"`。
+- 带 `--local` 只改本机；省略时，增删和设置操作会修改远程清单并 commit / push。
+- 用户未明确目标位置或发布范围时，先确认再操作。
 
-1. 以当前 session 的 skill 清单、环境中的$COPILOT_HOME、$CODEX_HOME或实际读取的 `SKILL.md` 路径为依据。优先检查本 skill 的安装位置；仓库中的 `skills/` 源码、当前工作目录和内置 `.system` 技能目录不能单独作为同步位置的依据。
-2. 展开目录别名，优先从 session 使用的 `<根目录>/.codex/skills/<skill>/SKILL.md` 或 `<根目录>/.copilot/skills/<skill>/SKILL.md` 推导同步根目录。遇到软链接时确认其共享正文位置，同步目标仍取 agent 加载入口所属的根目录。原有 session 直接从 `.agents/skills` 加载时，使用该共享目录所属根目录。
-3. 将同步根目录与用户主目录 `~` 比较，比较时规范化路径并处理软链接。根目录为用户主目录时可省略 `--home`；根目录为其他位置时，所有同步、增删、预检及重试指令都必须携带 `--home "<已确认的绝对根目录>"`。
-4. 用户明确指定目标位置时采用用户指定值；session 中存在多个安装根目录，或路径结构无法对应 `--home` 时，先确认目标再执行。
+## 入口
 
-例如，当前 session 从 `/work/demo/.codex/skills/harness-manage/SKILL.md` 加载本 skill，则同步命令为：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "/work/demo"
-```
-
-需要 Node.js ≥22.20.0、npm/npx、Git 和 curl。面向用户统一使用远程入口：
+Windows PowerShell：
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -"
@@ -36,99 +29,79 @@ Linux / macOS：
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module -
 ```
 
-在 node 参数末尾追加操作及已确认位置所需的 `--home`，Windows 放在外层双引号内。
-
-## 指定内容根目录
-
-`--home <目录>` 指定本次同步的根目录，默认用户主目录 `~`。传入后，skill、指令和本机配置分别使用该目录下的 `.agents`、`.codex`、`.copilot`、`.everything-harness`；显式目录优先于 `CODEX_HOME`、`COPILOT_HOME`。相对路径按启动目录解析，安装和检查子进程使用同一主目录。Git 发布沿用原环境的提交身份与认证。
-
-指定 `--home` 后，skills 在 `<home>/.agents/skills` 下载和维护共享正文。仅当规范化后的 home 不同于用户主目录时，sync 才为生效 agents 额外建立 `<home>/.codex/skills/<name>`、`<home>/.copilot/skills/<name>` 加载入口。方式跟随 CLI 实际返回的 `mode`：copy 复制完整内容，symlink 建立相对软链接；链接失败时回退复制。更新会替换选中的入口，删除会清理对应入口；共享正文与来源锁仍由 skills 管理，其他 skill 和未选中 agent 的入口保留。整体移动 home 后，相对链接和实体副本仍可使用。未指定 `--home`、指定 `--home ~` 或用户主目录的等价绝对路径时，沿用 skills 的原有安装方式，sync 不额外创建软链接或复制，也不自动迁移或删除已有入口。
-
-以上限制仅针对 skill 加载入口。显式指定 `--home` 时，`agents-md` 仍按生效 agents 写入 `<home>/.codex/AGENTS.md` 和 `<home>/.copilot/copilot-instructions.md`，包括 `home=~`。
-
-当已确认当前工作目录就是同步根目录时，可使用以下写法自动将所在文件夹传给 `--home`；其他位置使用已确认的绝对根目录。
-
-Linux / macOS：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "$PWD"
-```
-
-Windows PowerShell：
+在 node 参数末尾追加操作；Windows 放在外层双引号内。当前目录已确认为内容根目录时，可使用：
 
 ```powershell
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home `"$($PWD.Path)`""
 ```
 
-这里的所在文件夹是运行命令时的工作目录。`--home` 可与 `--local`、`--add`、`--del`、`--list`、`--dryrun` 等模式组合；目录选择只对本次命令生效。
+## 操作
 
-## 添加参数
+| 参数 | 行为 |
+| --- | --- |
+| 无参数 | 按清单顺序执行同步规则 |
+| `--list` | 显示远程内容、本机覆盖、agents 和删除项 |
+| `--dryrun` | 下载并检查，保留正式安装、片段和配置 |
+| `--add skill:NAME` | 添加自有 skill |
+| `--add owner/repo skill:NAME` | 添加指定 GitHub 来源的 skill |
+| `--add agents-md:NAME` | 添加自有指令片段 |
+| `--add rule:NAME` | 显式执行规则的全部成员 |
+| `--del type:NAME ...` | 删除 skill、片段或规则展开后的成员 |
+| `--auto_sync true\|false type:NAME ...` | 调整规则成员，不安装或卸载 |
+| `--add_agents AGENT ...` / `--del_agents AGENT ...` | 调整目标，下次同步生效 |
 
-`--add` 只接收一个或两个参数：
+`--add` 接收一个类型名称，或来源与 skill 类型名称两个参数。所有模式支持 `--home`；增删和设置支持 `--local`。本机 add 的内容必须存在于远程清单；本机 add rule 恢复该规则的完整远程成员。
 
-- 一个参数：`--add <type>:<name>`。类型支持 `skill`、`agents-md`、`rule`。自有 skill 默认来源为 `Charbddlie/everything-harness`。
-- 两个参数：`--add <owner>/<repo> skill:<name>`。第一个参数是 GitHub 来源，第二个参数是完整类型名称。其他来源的 skill 使用此形式。
-- 片段和规则使用单参数。批量添加通过 `rule:<name>` 的成员列表完成。
+## 路径与覆盖
 
-例如：
+共享 skill 正文在 `<home>/.agents/skills/<name>`。显式 home 不同于用户主目录时，另为生效 agents 复制 `.codex/skills/<name>`、`.copilot/skills/<name>`。`home=~` 不额外创建 skill 副本，也不自动迁移已有入口。
 
-```text
---add skill:harness-manage
---add owner/repo skill:example
---add agents-md:win-dev
---add rule:learn
---local --add rule:learn
+指令片段始终按生效 agents 写入 `<home>/.codex/AGENTS.md`、`<home>/.copilot/copilot-instructions.md`。省略 home 时尊重 `CODEX_HOME`、`COPILOT_HOME`；显式 home 优先。保留 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 之外的正文。
+
+Skill 每次同步完整覆盖，清理目标内的过时文件，保留未选中内容。`.eh-source.json` 保存来源，来源冲突时停止；无标记的同名目录按清单选中覆盖或删除，其他工具的锁文件不修改。自定义 home 删除时保留未选中 agent 的副本；用户主目录的共享正文须同时选择 Codex 和 Copilot 才能删除。
+
+## 规则与检查
+
+`harness.json` 的 `skill` 记录包含 `name`、`source`，`agents-md` 记录包含 `name`。`sync-rules` 将规则映射到 `[{"type_name":"skill:NAME"}]` 或片段成员。
+
+| 规则 | 条件 |
+| --- | --- |
+| `auto` | 无额外条件 |
+| `win` | Windows |
+| `learn` | Windows 且显式 add |
+
+同步按规则执行：下载来源仓库 → 检查全部 skill → 覆盖同一份已检查源码 → 写入片段。自有来源读取 main，第三方读取默认分支；第三方可使用仓库根目录或嵌套的 skill 目录，重复名称报错。
+
+自有 skill 包含脚本时必须提供 `dryrun.mjs`；第三方存在此入口时也执行。检查只验证环境与配置，不上传文件或调用业务、计费 API。某个 skill 检查失败时不覆盖该批正式内容，继续处理后续规则并汇总错误。
+
+临时目录清理失败时显示具体路径和系统错误；原始操作错误同时保留。检查失败保留正式安装，复制或发布中途失败保留已完成操作；根据报错修复后重跑同一条命令。
+
+## 配置与发布
+
+本机 `<home>/.everything-harness/harness.json` 首次保存 `{"sync-rules":{}}`，可增加 `agents`。本机每个规则完整覆盖同名远程规则；移除对应键即跟随远程。空 agents 暂停同步，关闭成员不卸载内容。
+
+远程删除将内容移入 `deleted`，skill 保留来源，同时删除对应自有源码；第三方仓库不变。删除项优先于本机规则，长期保留且不能重新启用。远程变更在隔离副本中提交，不改用户工作区；commit / push 失败保留副本并提示重试。
+
+## 清理本机内容
+
+先预览，再去掉 `--dryrun` 执行：
+
+```powershell
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --dryrun"
 ```
 
-自有 skill 使用单参数即可；本机添加也遵循相同参数规则。本机 add 的内容必须已存在于远程活动清单。远程新增自有内容时，先发布 `skills/<name>/` 或 `agents-md/<name>.md` 正文，再运行 add。
+额外清理已确认的内容根目录：
 
-## 清单与规则
+```powershell
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --home `"$($PWD.Path)`" --dryrun"
+```
 
-远程 `harness.json` 包含：
+Linux / macOS：
 
-- `agents`：全局目标，支持 `codex`、`github-copilot`，默认两者。
-- `skill`：活动 skill，记录 `name`、`source`。
-- `agents-md`：活动片段，记录 `name`，正文来源固定为 eh。
-- `sync-rules`：规则名到成员列表的对象，每个成员为 `{"type_name":"skill:NAME"}` 或 `{"type_name":"agents-md:NAME"}`。
-- `deleted`：独立删除记录。Skill 保存 `type_name`、`source`，片段仅保存 `type_name`。
+```sh
+curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/clean.mjs | node --input-type=module - --home "$PWD" --dryrun
+```
 
-同步条件统一由规则回调管理：
+与 sync 不同，clean 的 `--home` 是额外目标，**始终同时清理用户主目录**。它删除两处 `.agents/skills`、`.codex/skills`、`.copilot/skills` 中远程活动项和删除项的所有同名 skill，不受来源标记或本机开关限制。
 
-| 规则 | 条件 | 当前成员 |
-| --- | --- | --- |
-| `auto` | 无额外条件 | copilot-api、harness-manage 与通用片段 |
-| `win` | Windows | win-dev |
-| `learn` | Windows 且通过 add 显式调用 | paper-add、paper-read、zotero-init |
-
-规则回调在 `sync.mjs` 注册，复用 Windows 和显式调用检测函数。规则成员只引用活动 skill 或片段，不能嵌套规则。
-
-普通 sync 按清单顺序逐条执行规则的 add，标记为非显式调用。检测顺序为：规则回调 → 检测函数 → 本批所有 skill 的 `dryrun.mjs` → 批量安装。条件未满足时跳过该规则，已有安装保留。
-
-测试前通过 `npx skills` 在临时项目准备源码，测试全部通过后才覆盖正式安装并写入片段；临时项目随后清理。测试失败时保留本批正式安装和原配置，继续检查后续规则并汇总错误。Skill 测试仅检查环境与配置，业务操作、用户文件上传和计费 API 调用排除在检查范围外。纯说明 skill 可没有 dryrun；自有 skill 包含脚本时必须提供 dryrun，第三方存在此入口时同样执行。
-
-临时项目和 Git 临时副本逐项清理，删除遇到文件占用等可重试错误时最多重试 3 次。仍失败时显示具体文件或子目录的完整路径及系统错误；若安装、检查或 Git 操作也失败，会同时保留原始错误。可根据路径排查占用或权限，修复后重新运行同一条命令。
-
-## 删除与配置
-
-- `--del skill:NAME`、`--del agents-md:NAME`：删除指定内容，可一次传多个名称。
-- `--del rule:learn`：展开该规则的全部远程成员，直接删除；跳过规则条件与 skill 测试，保留来源和片段标记校验。
-- 带 `--local` 时，删除本机安装并从本机生效规则移除成员，远程正文与清单保留。
-- 省略 `--local` 时，从活动数组和所有规则移除成员，将删除记录放入 `deleted`；对应自有 skill 目录或片段文件与清单一起提交并推送。第三方来源仓库保持不变。
-- `--add_agents codex` / `--del_agents github-copilot` 调整全局目标，支持多个 agent；加 `--local` 设置本机覆盖。下次同步生效，已有安装保留。
-- `--auto_sync true|false type:name` 保留为兼容入口，通过 `sync-rules` 调整成员。true 恢复远程所属规则，未分组内容加入 auto；false 从生效规则移除。此操作只改配置。
-- `--list` 展示内容来源、规则成员、本机覆盖、全局目标和删除记录。
-- `--dryrun` 以普通 sync 的非显式上下文运行规则检测与 skill 测试，预告删除，保留个人安装和配置。
-
-过时项由 eh 的 `deleted` 清单识别。`skills list` 提供本机安装和来源信息，`skills remove` 执行卸载。已记录来源发生冲突时停止清理。删除记录优先于本机规则覆盖并长期保留；已删除名称只能重试 del，改名需创建新名称。
-
-## 本机覆盖与迁移
-
-本机 `~/.everything-harness/harness.json` 首次创建为 `{"sync-rules":{}}`，可另有顶层 `agents`。本机每条规则整份覆盖同名远程成员列表；移除本机对应规则键即可恢复跟随远程。正文、来源与删除记录始终取远程。
-
-显式 `--local --add rule:NAME` 使用远程完整成员列表，成功后恢复该组本机成员；后续普通 sync 仍检查规则条件，因此 learn 保持显式调用要求。本机 del rule 删除整组并移除本机生效成员。
-
-旧 `skills` / `skill`、`fragments` / `agents-md` 中的 `auto_sync` 迁为规则成员覆盖：true 优先沿用远程所属规则，未分组内容进入 auto；false 从生效规则移除。新文件缺失时迁入旧 `skills.json`、`agents-md.json`，保留原文件作备份，忽略旧 skill 级 agents。新文件存在后以新文件为准。列表和预检只读取迁移结果，同步或本机操作成功后保存新配置。新旧字段有歧义时先合并再重试。
-
-空 agents 暂停 sync 和预检，显式安装、删除需先设置目标。共享正文及锁文件由 skills 管理，非用户主目录的显式 home 的 agent 加载入口由 sync 接入，保留已有父目录软链接。片段按 `<!-- eh:NAME:start -->` / `<!-- eh:NAME:end -->` 原位覆盖，保留标记外内容、未选中块和目标文件软链接。
-
-远程管理在临时副本中完成 Git 操作，保持用户工作区原状。失败时保留已完成的本机操作；commit / push 失败保留操作副本并提示重试。删除后的源码可从 Git 历史恢复。发布源码时只迁入说明、脚本和必要资源，凭据、缓存和本机配置放在安装目录之外。
+指令清理覆盖各根目录及上述三个子目录中的 `AGENTS.md`、`CLAUDE.md`、`copilot-instructions.md`，移除所有 eh 标记块，保留文件和其他正文。保留其他 skills、本机配置、锁文件和远程清单；再次同步会重新安装启用的内容。执行失败会显示路径，已完成操作不回滚。
