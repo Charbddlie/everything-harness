@@ -1,15 +1,31 @@
 ---
 name: harness-manage
-description: 管理 eh 的本机同步范围与 harness 目标；确认 session 的安装根目录后，使用 sync.mjs 启停 skill、片段、规则和 agent 同步，检查或清理安装。当用户提到“更新skill”, “同步eh”时触发。
+description: 管理 eh 的本机同步范围与 harness 目标，以及新建、导入 skill 或 agents-md 的流程。当用户提到“更新skill”“同步eh”或向 eh 添加 skill、agents-md 时触发。
 ---
 
 # Harness 管理
 
 `eh` 指 everything-harness。源码发布到 GitHub 后，由 `sync.mjs` 单向覆盖安装。需要 Node.js ≥22.20.0、Git 和 curl；运行时直接下载、检查和复制目录。
 
+## 新建 skill 或 agents-md 的 SOP
+
+1. 将 eh 克隆到本地：`git clone https://github.com/Charbddlie/everything-harness.git`。已有本地仓库时直接复用，进入仓库根目录并读取 `AGENTS.md`。
+2. 准备待编辑内容。
+  Skill 统一暂存到 eh 内的 `.agents/skills/<name>/`，按来源选择获取方式：
+   - 远程 skill：在 eh 根目录执行 `npx skills add <owner/repo> --skill <name> --agent codex --yes`。
+   - 已有 skill：复制原 skill 的正文、脚本和资源。
+   - 全新 skill：编写 `SKILL.md` 初稿及所需资源。
+  agents-md 片段通过新建或复制已有内容准备，暂存到 `.agents/agents-md/<name>.md`。
+3. 告诉用户待编辑文件的绝对路径，请用户二次编辑，然后暂停，等待用户明确表示编辑完成。
+4. 用户确认完成后，审阅内容及引用资源，将 skill 整个目录移动到 `skills/<name>/`，将 agents-md 片段移动到 `agents-md/<name>.md`。包含脚本的自有 skill 同步提供或更新 `dryrun.mjs`，检查范围限于环境与配置。
+5. 在 `harness.json` 中登记内容：skill 的 `source` 使用 `Charbddlie/everything-harness`，agents-md 登记 `name`；按预期同步范围维护 `sync-rules`。
+6. 检查 skill 结构、资源引用和适用的 dryrun，运行 `node --test`。暂存内容、下载缓存、锁文件和凭据留在提交范围之外。
+7. 执行 commit push。
+8. 推送成功后，按下文“确认范围”确定当前 session 的内容 home，在 eh 根目录执行一次 `node sync.mjs --home "<session 的内容 home 绝对路径>"`，同步本机 skill 和 agents-md，并告知用户同步结果。
+
 ## 确认范围
 
-执行前从当前 session 的 skill 清单、实际 `SKILL.md` 路径和 agent 环境变量确定同步根目录。`.agents/skills`、`.codex/skills`、`.copilot/skills` 的所属根目录才是内容 home，源码仓库的 `skills` 不能作为安装位置的依据。
+执行本机同步或清理前，从当前 session 的 skill 清单、实际 `SKILL.md` 路径和 agent 环境变量确定同步根目录。`.agents/skills`、`.codex/skills`、`.copilot/skills` 的所属根目录才是内容 home，源码仓库的 `skills` 不能作为安装位置的依据。
 
 - 根目录为用户主目录时可省略 `--home`；其他位置必须传入 `--home "<绝对目录>"`。
 - `--add`、`--del` 管理本机同步选择；内容、来源和规则定义由仓库的 `harness.json` 维护。
