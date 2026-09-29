@@ -221,6 +221,53 @@ test('sync continues through all rules after a failure and reports the aggregate
   assert.ok(f.events.includes('自动配置: learn'));
   assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:'));
   assert.ok(!existsSync(f.settings));
+  assert.ok(f.logs.includes('本次未应用的 rule：rule:auto, rule:learn'));
+});
+
+test('sync summary excludes rule members and installed skills, but includes empty skill directories', (t) => {
+  const f = fixture(t);
+  f.manifest.skill.push(skill('agent-only'), skill('empty'));
+  f.dependencies.env.CODEX_HOME = join(f.root, 'outside');
+  put(join(f.root, 'outside', 'skills', 'unused', 'SKILL.md'), skillText('unused'));
+  put(join(f.root, '.codex', 'skills', 'agent-only', 'SKILL.md'), skillText('agent-only'));
+  mkdirSync(join(f.root, '.agents', 'skills', 'empty'), { recursive: true });
+  f.run();
+  assert.deepEqual(f.logs.slice(-2), [
+    '本次未应用的 rule：rule:win, rule:learn',
+    '未安装的独立skill：skill:unused, skill:empty',
+  ]);
+  f.seed('unused');
+  f.run();
+  assert.equal(f.logs.at(-1), '未安装的独立skill：skill:empty');
+});
+
+test('sync summary uses local rule overrides and dryrun never counts rules as applied', (t) => {
+  const f = fixture(t);
+  put(f.settings, JSON.stringify({ 'sync-rules': { auto: [] } }));
+  f.run();
+  assert.deepEqual(f.logs.slice(-2), [
+    '本次未应用的 rule：rule:auto, rule:win, rule:learn',
+    '未安装的独立skill：skill:core, skill:unused',
+  ]);
+  put(f.settings, JSON.stringify({ 'sync-rules': {} }));
+  f.run(['--dryrun']);
+  assert.deepEqual(f.logs.slice(-2), [
+    '本次未应用的 rule：rule:auto, rule:win, rule:learn',
+    '未安装的独立skill：skill:unused',
+  ]);
+  assert.equal(f.installed.size, 0);
+});
+
+test('sync summary checks the selected home rather than installations in the original home', (t) => {
+  const f = fixture(t), home = join(f.root, 'other-home');
+  f.seed('unused');
+  f.run(['--home', home]);
+  assert.equal(f.logs.at(-1), '未安装的独立skill：skill:unused');
+  put(join(home, '.copilot', 'skills', 'unused', 'SKILL.md'), skillText('unused'));
+  f.logs.length = 0;
+  f.run(['--home', home]);
+  assert.equal(f.logs.at(-1), '本次未应用的 rule：rule:win, rule:learn');
+  assert.ok(!f.logs.some((line) => line.startsWith('未安装的独立skill：')));
 });
 
 test('list is read-only and dryrun follows rule conditions without installation', (t) => {
@@ -491,7 +538,7 @@ test('temporary cleanup failure does not block fragments, later rules or local s
     assert.ok(f.events.includes('自动配置: learn'));
     assert.ok(existsSync(f.settings));
     assert.ok(f.logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
-    assert.equal(f.logs.at(-1), '规则同步和环境检查完成。');
+    assert.equal(f.logs.at(-3), '规则同步和环境检查完成。');
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
 });
 

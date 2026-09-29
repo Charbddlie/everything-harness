@@ -132,11 +132,12 @@ test('progress output numbers actual stages and labels warnings without hiding a
   assert.deepEqual(stages(), [
     '1. 读取清单和本机设置', '2. 自动配置: auto',
     '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
-    '3. 确认本机设置',
+    '3. 创建本地设置',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[警告] [one] 失败')));
   assert.ok(f.logs.some((line) => line.includes('[通过] 覆盖安装')));
   assert.ok(f.logs.at(-1).startsWith('  [完成]'));
+  assert.ok(!f.logs.some((line) => /本次未应用的 rule|未安装的独立skill/.test(line)));
   f.logs.length = 0;
   f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   assert.throws(() => f.run(['--dryrun']), /环境检查失败/);
@@ -161,7 +162,7 @@ test('automatic configuration resets subnumbering per rule and keeps later stage
     '1. 读取清单和本机设置',
     '2. 自动配置: auto', '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
     '3. 自动配置: win', '3.1 下载 skill 源码', '3.2 检查 skill 环境', '3.3 应用 skill 到目标目录', '3.4 清理临时目录',
-    '4. 自动配置: learn', '5. 确认本机设置',
+    '4. 自动配置: learn', '5. 创建本地设置',
   ]);
   assert.ok(f.logs.some((line) => line.includes('[跳过] 跳过 rule:learn')));
   f.logs.length = 0;

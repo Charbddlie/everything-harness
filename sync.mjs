@@ -397,6 +397,17 @@ function effectiveRules(manifest, local) {
     .map(([rule, members]) => [rule, members.filter(({ type_name }) => active.has(type_name))]));
 }
 
+function reportUnapplied(manifest, rules, appliedRules, dependencies, log) {
+  const pendingRules = Object.keys(rules).filter((name) => !appliedRules.has(name));
+  const members = new Set(Object.values(rules).flatMap((entries) => entries.map(({ type_name }) => type_name)));
+  const home = dependencies.homeDir ?? homedir();
+  const directories = ['.agents', '.codex', '.copilot'].map((agent) => join(home, agent, 'skills'));
+  const pendingSkills = manifest.skill.filter(({ name }) => !members.has(`skill:${name}`)
+    && !directories.some((directory) => statSync(join(directory, name, 'SKILL.md'), { throwIfNoEntry: false })?.isFile()));
+  if (pendingRules.length) log(`本次未应用的 rule：${pendingRules.map((name) => `rule:${name}`).join(', ')}`);
+  if (pendingSkills.length) log(`未安装的独立skill：${pendingSkills.map(({ name }) => `skill:${name}`).join(', ')}`);
+}
+
 export function writeAtomic(path, text, log = createProgressLogger()) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -874,26 +885,36 @@ export function sync(args, dependencies = {}) {
   const { manifest, local } = readCatalog(dependencies);
   if (options.mode === 'list') { listCatalog(manifest, local, log); return; }
   const agents = effectiveAgents(manifest, local);
+  const rules = effectiveRules(manifest, local), appliedRules = new Set();
   if (!agents.length) {
     if (options.mode === 'sync') initializeLocalSettings(local, log);
-    log('生效 agents 为空，无需安装或检查。', { status: '跳过' }); return;
+    log('生效 agents 为空，无需安装或检查。', { status: '跳过' });
+    reportUnapplied(manifest, rules, appliedRules, dependencies, log);
+    return;
   }
   const dryrun = options.mode === 'dryrun';
   const deleted = ['skill', 'agents-md'].flatMap((type) => deletedEntries(manifest, type));
   executePlans([{ rule: null, entries: deleted }], { mode: 'del', dryrun }, agents, dependencies, log);
   const failures = [];
-  for (const [name, members] of Object.entries(effectiveRules(manifest, local))) {
+  for (const [name, members] of Object.entries(rules)) {
     // Use the exact same add planner and executor as explicit rule invocation.
     const add = { ...parseArgs(['--local', '--add', `rule:${name}`]), explicit: false, dryrun, members };
-    try { executePlans(resolvePlans({ ...manifest, 'sync-rules': { ...manifest['sync-rules'], [name]: members } }, add), add, agents, dependencies, log); }
+    try {
+      const applied = executePlans(resolvePlans({ ...manifest, 'sync-rules': { ...manifest['sync-rules'], [name]: members } }, add), add, agents, dependencies, log);
+      if (applied && !dryrun && members.length) appliedRules.add(name);
+    }
     catch (error) { failures.push(`${name}: ${error.message}`); log(`[rule:${name}] 失败：${error.message}`, { status: '失败' }); }
   }
-  check(!failures.length, `规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
+  if (failures.length) {
+    reportUnapplied(manifest, rules, appliedRules, dependencies, log);
+    throw new Error(`规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
+  }
   if (!dryrun) {
-    log('确认本机设置', { stage: true });
+    log('创建本地设置', { stage: true });
     initializeLocalSettings(local, log);
   }
   log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。', { status: '完成' });
+  reportUnapplied(manifest, rules, appliedRules, dependencies, log);
 }
 
 if (import.meta.main) {
