@@ -138,7 +138,7 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   catalog.skills.push({ name: 'pdf-renamed', source: 'integration-fixture/skills', auto_sync: true });
   const instructions = join(env.CODEX_HOME, 'AGENTS.md');
   writeFileSync(instructions, 'Personal\n<!-- eh:old-rule:start -->\nOld\n<!-- eh:old-rule:end -->\n');
-  catalog.fragments = [{ name: 'old-rule', auto_sync: false, deleted: true }, { name: 'new-rule', auto_sync: true }];
+  catalog['agents-md'] = [{ name: 'old-rule', auto_sync: false, deleted: true }, { name: 'new-rule', auto_sync: true }];
   dependencies.fetchFragment = () => '## New rule\nKeep it simple.';
   sync([], dependencies);
   const afterRename = JSON.parse(runSkills(['list', '-g', '--json']));

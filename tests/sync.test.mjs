@@ -133,7 +133,7 @@ test('global remote targets apply to every skill on every sync', () => {
   manifest.agents.push('github-copilot');
   fixture.run();
   assert.deepEqual(fixture.calls.at(-1), ['add', 'example/skills', '--skill', 'one', 'two', '--agent', 'codex', 'github-copilot', '-g', '--yes', '--json']);
-  assert.deepEqual(localManifest(fixture), { skills: [], fragments: [] });
+  assert.deepEqual(localManifest(fixture), { skills: [], 'agents-md': [] });
 });
 
 test('local global agents replace remote targets for sync, add and del while keeping skill overrides', () => {
@@ -164,7 +164,7 @@ test('local global agents replace remote targets for sync, add and del while kee
 test('empty global targets disable operations without removing installations; agents can be re-enabled', () => {
   const fixture = harness({ installed: [record('one')] });
   fixture.run(['--local', '--del_agents', ...agents]);
-  assert.deepEqual(localManifest(fixture), { agents: [], skills: [], fragments: [] });
+  assert.deepEqual(localManifest(fixture), { agents: [], skills: [], 'agents-md': [] });
   for (const args of [[], ['--dryrun']]) fixture.run(args);
   fixture.run(['--list']);
   assert.ok(fixture.logs.some((line) => line.includes('本机 agents：无\n生效 agents：无')));
@@ -216,7 +216,7 @@ test('first sync initializes an empty local manifest so future remote defaults s
   const manifest = { agents, skills: [entry('one', 'example/skills', false)] };
   const fixture = harness({ manifest });
   fixture.run();
-  assert.deepEqual(localManifest(fixture), { skills: [], fragments: [] });
+  assert.deepEqual(localManifest(fixture), { skills: [], 'agents-md': [] });
   assert.equal(fixture.calls.length, 0);
   manifest.skills[0].auto_sync = true;
   fixture.run();
@@ -395,7 +395,7 @@ const remoteManifest = (options) => JSON.parse(runCommand('git', ['--git-dir', o
 for (const fragments of [false, true]) {
   for (const deleted of [false, true]) {
     test(`remote deletion removes ${fragments ? 'fragment file' : 'entire own skill directory'} with deleted=${deleted}`, (t) => {
-      const key = fragments ? 'fragments' : 'skills';
+      const key = fragments ? 'agents-md' : 'skills';
       const target = { ...(fragments ? { name: 'one', auto_sync: true } : entry('one', OWN_SOURCE.toUpperCase())),
         ...(deleted ? { auto_sync: false, deleted: true } : {}) };
       const manifest = { agents, skills: [], [key]: [target] };
@@ -432,7 +432,7 @@ test('third-party deletion preserves same-named repository source', (t) => {
 });
 
 test('local deletion preserves repository source and remote manifest for skills and fragments', (t) => {
-  const manifest = { agents, skills: [entry('one', OWN_SOURCE)], fragments: [{ name: 'one', auto_sync: true }] };
+  const manifest = { agents, skills: [entry('one', OWN_SOURCE)], 'agents-md': [{ name: 'one', auto_sync: true }] };
   const files = { 'skills/one/SKILL.md': 'skill\n', 'agents-md/one.md': 'fragment\n' };
   const root = repository(t, manifest, files), options = managed(root), fixture = harness({ manifest });
   options.env.CODEX_HOME = join(root, 'codex');
@@ -473,14 +473,14 @@ test('source deletion failures preserve the operation copy and allow retry', (t)
 });
 
 test('remote fragment switches publish only harness.json and preserve local choices', (t) => {
-  const root = repository(t, { ...catalog, fragments: [{ name: 'simple-dev', auto_sync: true }] }), options = managed(root), fixture = harness();
+  const root = repository(t, { ...catalog, 'agents-md': [{ name: 'simple-dev', auto_sync: true }] }), options = managed(root), fixture = harness();
   const localPath = join(fixture.dependencies.stateDir, 'harness.json');
-  const local = '{"skills":[],"fragments":[{"name":"simple-dev","auto_sync":true}]}';
+  const local = '{"skills":[],"agents-md":[{"name":"simple-dev","auto_sync":true}]}';
   writeFileSync(localPath, local);
   const before = remoteManifest(options);
   fixture.run(['--fragments', '--auto_sync', 'false', 'simple-dev'], options);
   const readRemote = () => JSON.parse(runCommand('git', ['--git-dir', options.repositoryUrl, 'show', 'main:harness.json']));
-  assert.deepEqual(readRemote(), { ...before, fragments: [{ name: 'simple-dev', auto_sync: false }] });
+  assert.deepEqual(readRemote(), { ...before, 'agents-md': [{ name: 'simple-dev', auto_sync: false }] });
   assert.deepEqual(remoteManifest(options).skills, before.skills);
   assert.equal(readFileSync(localPath, 'utf8'), local);
   assert.equal(fixture.calls.length, 0);
@@ -518,7 +518,7 @@ test('remote agent changes publish only global settings, are idempotent, and pre
 });
 
 test('remote fragment deletion cleans targets, retains the entry and can retry a failed push', (t) => {
-  const manifest = { agents, skills: [entry('one')], fragments: [{ name: 'old-rule', auto_sync: true }] };
+  const manifest = { agents, skills: [entry('one')], 'agents-md': [{ name: 'old-rule', auto_sync: true }] };
   const root = repository(t, manifest), options = managed(root), f = harness();
   options.homeDir = join(dirname(root), 'profile');
   options.env = { ...options.env, CODEX_HOME: join(options.homeDir, '.codex'), COPILOT_HOME: join(options.homeDir, '.copilot') };
@@ -531,7 +531,7 @@ test('remote fragment deletion cleans targets, retains the entry and can retry a
   assert.equal(readFileSync(path, 'utf8'), 'Personal\n\nEnd');
   assert.deepEqual(remoteManifest(options), manifest);
   f.run(['--fragments', '--del', 'old-rule'], options);
-  assert.deepEqual(remoteManifest(options), { ...manifest, fragments: [{ name: 'old-rule', auto_sync: false, deleted: true }] });
+  assert.deepEqual(remoteManifest(options), { ...manifest, 'agents-md': [{ name: 'old-rule', auto_sync: false, deleted: true }] });
   assert.equal(f.calls.length, 0);
   assert.equal(runCommand('git', ['--git-dir', options.repositoryUrl, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'main']).trim(), 'harness.json');
 });

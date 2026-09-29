@@ -88,9 +88,11 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ## 自动同步与本机选择
 
-远程 `harness.json` 的 `auto_sync` 是默认值。每次同步读取 `~/.everything-harness/harness.json`：同一数组中同名条目的开关覆盖远程默认，缺省跟随远程。首次创建 `{"skills":[],"fragments":[]}`，agents 和开关均跟随远程。Skill 来源、片段正文和删除状态始终取远程；删除标记优先于本机开关。
+远程 `harness.json` 的 `auto_sync` 是默认值。每次同步读取 `~/.everything-harness/harness.json`：同一数组中同名条目的开关覆盖远程默认，缺省跟随远程。首次创建 `{"skills":[],"agents-md":[]}`，agents 和开关均跟随远程。Skill 来源、片段正文和删除状态始终取远程；删除标记优先于本机开关。
 
 当本机新文件缺失时，自动合并旧 `skills.json` 与 `agents-md.json` 中的开关和全局 agents，保留旧文件作备份。`--list`、`--dryrun` 只读取迁移结果，普通同步或本机设置命令保存到 `harness.json`。新文件存在后只使用新文件。
+
+本机旧 `harness.json` 的 `fragments` 字段自动迁入 `agents-md`，保留已有开关；同步或本机设置操作保存新字段，`--list`、`--dryrun` 保持只读。同时存在两个字段时，需先手动合并到 `agents-md`。命令行片段选项仍为 `--fragments`。
 
 在同一个远程入口后加参数即可操作。以下命令仍使用远程脚本，无需下载其他脚本：
 
@@ -116,13 +118,15 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 ### AGENTS.md 片段
 
-三个片段默认 `auto_sync=true`：
+片段及默认同步开关：
 
-| 片段 | 内容 |
-| --- | --- |
-| [dev-directory](agents-md/dev-directory.md) | 项目位置、conda 环境和启动入口 |
-| [formula-display](agents-md/formula-display.md) | CLI Unicode 与文件 LaTeX 格式 |
-| [simple-dev](agents-md/simple-dev.md) | 直接实现、按实际需求增加复杂度、验证后结束 |
+| 片段 | 内容 | auto_sync |
+| --- | --- | --- |
+| [win-dir](agents-md/win-dir.md) | Windows 项目位置、conda 环境和启动入口 | false |
+| [formula-display](agents-md/formula-display.md) | CLI Unicode 与文件 LaTeX 格式 | true |
+| [simple-dev](agents-md/simple-dev.md) | 直接实现、按实际需求增加复杂度、验证后结束 | true |
+| [simple-doc](agents-md/simple-doc.md) | 文档与注释约定 | true |
+| [instruction](agents-md/instruction.md) | 指令约束 | true |
 
 `simple-dev` 提炼自 [Stop That Shit](https://github.com/lennney/stop-that-shit) 的决策原则。片段使用纯 Markdown，无需 Skill frontmatter。
 
@@ -135,15 +139,16 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
     { "name": "dev-directory", "source": "Charbddlie/everything-harness", "auto_sync": false, "deleted": true },
     { "name": "formula-display", "source": "Charbddlie/everything-harness", "auto_sync": false, "deleted": true }
   ],
-  "fragments": [
-    { "name": "dev-directory", "auto_sync": true },
+  "agents-md": [
+    { "name": "dev-directory", "auto_sync": false, "deleted": true },
+    { "name": "win-dir", "auto_sync": false },
     { "name": "formula-display", "auto_sync": true },
     { "name": "simple-dev", "auto_sync": true }
   ]
 }
 ```
 
-片段记录只有 `name`、`auto_sync` 和可选的 `deleted`，无 `source` 或独立 agents。正文始终读取 eh 远程 `main` 的 `agents-md/<name>.md`；本机开关存放在同一个 `harness.json` 的 `fragments` 数组。
+片段记录只有 `name`、`auto_sync` 和可选的 `deleted`，无 `source` 或独立 agents。正文始终读取 eh 远程 `main` 的 `agents-md/<name>.md`；本机开关存放在同一个 `harness.json` 的 `agents-md` 数组。
 
 片段沿用 `harness.json` 的生效全局 agents：
 
@@ -171,7 +176,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 
 关闭同步保留已有片段。新增片段时在源码仓库添加 Markdown 和清单记录，发布后运行 sync。
 
-原 `dev-directory` 和 `formula-display` Skill 已删除源码，清单保留删除记录；sync 会提示并清理旧安装，两个同名片段保持开启。
+`dev-directory` 片段已改名为 `win-dir`，默认 `auto_sync=false`，需要时显式开启。旧片段及同名 Skill 的删除记录长期保留，sync 会清理旧内容；`formula-display` 片段保持开启。
 
 ### 删除与改名
 
@@ -223,7 +228,7 @@ skills/skill-manage/
   SKILL.md
 harness.json
 agents-md/
-  dev-directory.md
+  win-dir.md
   formula-display.md
   simple-dev.md
 sync.mjs
@@ -235,7 +240,7 @@ AGENTS.md
 
 `copilot-api` 替代原本的 `claude-init`，远程 `auto_sync=true`，默认安装技能说明及启动脚本模板。调用时安装本地网关、引导登录，并按用户选择配置 Claude Code / Codex；安装 skill 本身只检查 Node.js 与 npm，不启动网关或改写客户端配置。Windows 模板使用兼容 GBK 的 ASCII / CRLF，macOS / Linux 模板使用 LF。
 
-`dev-directory` 和 `formula-display` 的常驻规则通过同名片段同步。
+`win-dir` 和 `formula-display` 的常驻规则通过片段同步。
 
 `paper-add`、`paper-read` 和 `zotero-init` 从本机技能迁入。前两者保留 Python 标准库脚本，使用 Windows conda base（`~\miniconda3\python.exe`）；各自的 `dryrun.mjs` 检查 Zotero 路径与凭据，`paper-read` 还检查 MinerU 密钥。`zotero-init` 是初始化说明，不需要检查脚本。`key.env` 不分发，推荐用环境变量提供 `MINERU_API_KEY`；Zotero 凭据支持环境变量或现有 Claude MCP 配置。初始化说明当前针对 Claude Code，跨 agent 安装不自动注册 MCP。
 

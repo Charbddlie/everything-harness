@@ -54,8 +54,9 @@
       "auto_sync": false
     }
   ],
-  "fragments": [
-    { "name": "dev-directory", "auto_sync": true },
+  "agents-md": [
+    { "name": "dev-directory", "auto_sync": false, "deleted": true },
+    { "name": "win-dir", "auto_sync": false },
     { "name": "formula-display", "auto_sync": true },
     { "name": "simple-dev", "auto_sync": true },
     { "name": "simple-doc", "auto_sync": true },

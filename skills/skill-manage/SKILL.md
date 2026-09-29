@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 每次 sync 先提示并清理 `deleted=true` 的旧 Skill，再通过 `skills add` 覆盖安装开启 `auto_sync` 的 Skill；片段同时按删除标记清理或按开关覆盖。删除标记优先于本机开关。目录与锁文件由 `skills` 管理；源码在仓库维护，凭据和本机配置放在安装目录之外。
 
-远程与本机均使用 `harness.json`，包含 `agents`、`skills`、`fragments`。本机 `~/.everything-harness/harness.json` 的开关和顶层 agents 优先，缺省跟随远程；删除状态始终取远程。新文件缺失时迁入旧 `skills.json`、`agents-md.json` 的设置，旧文件保留作备份；新文件存在后只使用新文件。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
+远程与本机均使用 `harness.json`，包含 `agents`、`skills`、`agents-md`。本机 `~/.everything-harness/harness.json` 的开关和顶层 agents 优先，缺省跟随远程；删除状态始终取远程。新文件缺失时迁入旧 `skills.json`、`agents-md.json` 的设置，旧文件保留作备份；新文件存在后只使用新文件。所有操作都用上面的远程命令，在 node 参数末尾追加选项（Windows 放在外层双引号内）：
 
 - `--add owner/repo skill-name`：先安装并检查环境，成功后加入远程清单。
 - `--del skill-name`：先删除本机安装，成功后删除 eh 仓库中的自有 skill 目录，仅在远程 `harness.json` 保留 entry 并设置 `deleted=true`、`auto_sync=false`。
@@ -47,13 +47,15 @@ agents 增删只保存配置，下次同步生效，已有安装保留。本机�
 
 ## AGENTS.md 片段
 
-正文放在 `agents-md/<name>.md`，记录放在 `harness.json` 的 `fragments` 数组，字段为 `name`、`auto_sync` 和可选 `deleted`。片段无 `source`，与 skills 共用顶层 agents。
+正文放在 `agents-md/<name>.md`，记录放在 `harness.json` 的 `agents-md` 数组，字段为 `name`、`auto_sync` 和可选 `deleted`。片段无 `source`，与 skills 共用顶层 agents。
+
+本机旧 `fragments` 字段自动迁入 `agents-md`，保留开关；同步或本机设置操作保存新字段，列表和预检保持只读。两个字段同时存在时，先合并到 `agents-md` 再重试。命令行选项保持 `--fragments`。
 
 - 同一同步入口覆盖更新开启的片段，使用生效的全局 agents。Codex 目标为 `$CODEX_HOME/AGENTS.md`（默认 `~/.codex/AGENTS.md`）；Copilot 目标为 `$COPILOT_HOME/copilot-instructions.md`（默认 `~/.copilot/copilot-instructions.md`）。
 - `--fragments --auto_sync false simple-dev` 修改远程开关并 commit / push；加 `--local` 只改本机开关。改为 `true` 即开启，下次同步生效。
 - `--fragments --del NAME` 清理本机标记块后，删除仓库中的 `agents-md/<name>.md`，将远程 entry 标记删除并一并 commit / push；加 `--local` 只清理本机并保存 `auto_sync=false`。
 - 同步原位替换 `<!-- eh:<name>:start -->` 与 `<!-- eh:<name>:end -->` 之间的正文，删除项移除整个块，保留块外内容。关闭同步保留已有块。
-- `dev-directory`、`formula-display`、`simple-dev` 片段默认开启；两个同名旧 Skill 已删除源码并标记删除，sync 自动清理旧安装。
+- `win-dir` 片段默认关闭同步，开启后提供 Windows 目录约定。`dev-directory` 旧片段及同名 Skill 已标记删除，sync 自动清理旧内容；`formula-display`、`simple-dev` 片段默认开启。
 
 ## 删除与改名
 
