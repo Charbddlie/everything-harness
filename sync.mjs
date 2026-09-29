@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, join, relative } from 'node:path';
+import { delimiter, dirname, join, relative, resolve } from 'node:path';
 
 export const OWN_SOURCE = 'Charbddlie/everything-harness';
 export const MANIFEST_URL = `https://raw.githubusercontent.com/${OWN_SOURCE}/main/harness.json`;
@@ -15,6 +15,7 @@ node sync.mjs [--local] --auto_sync <true|false> <type>:<name> ...
 node sync.mjs [--local] --add_agents <agent> ...
 node sync.mjs [--local] --del_agents <agent> ...
 type: skill | agents-md | rule
+所有模式支持 --home <目录>，默认用户主目录（~）。
 --add 接收一个或两个参数；自有 skill 单参数默认来源为 ${OWN_SOURCE}。`;
 
 function check(condition, message) { if (!condition) throw new Error(message); }
@@ -83,6 +84,13 @@ export function parseArgs(args) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') { options.help = true; continue; }
     if (arg === '--local' && !options.local) { options.local = true; continue; }
+    if (arg === '--home') {
+      check(!Object.hasOwn(options, 'home'), '--home 不能重复指定。');
+      const value = args[++i];
+      check(typeof value === 'string' && value.trim() && !value.startsWith('-') && !value.includes('\0'), `${arg} 需要有效的目录参数。`);
+      options.home = value;
+      continue;
+    }
     if (['--add', '--del', '--list', '--dryrun', '--auto_sync', '--add_agents', '--del_agents'].includes(arg) && options.mode === 'sync') {
       options.mode = arg.slice(2);
       if (['--add', '--del', '--auto_sync', '--add_agents', '--del_agents'].includes(arg)) {
@@ -115,6 +123,27 @@ export function parseArgs(args) {
     options.names = values;
   }
   return options;
+}
+
+export function homeDependencies(home, dependencies = {}) {
+  if (home === undefined) return dependencies;
+  const baseEnv = dependencies.env ?? process.env;
+  const originalHome = dependencies.homeDir ?? homedir();
+  const expanded = home === '~' ? originalHome : /^~[/\\]/.test(home) ? join(originalHome, home.slice(2)) : home;
+  const homeDir = resolve(dependencies.cwd ?? process.cwd(), expanded);
+  check(!existsSync(homeDir) || statSync(homeDir).isDirectory(), `--home 必须是目录：${homeDir}`);
+  const env = { ...baseEnv };
+  // Scope the override to installation/check subprocesses. Git publication
+  // retains the caller's identity and authentication environment.
+  for (const key of Object.keys(env)) {
+    if (['HOME', 'USERPROFILE', 'CODEX_HOME', 'COPILOT_HOME', 'XDG_STATE_HOME'].includes(key.toUpperCase())) delete env[key];
+  }
+  Object.assign(env, {
+    HOME: homeDir, USERPROFILE: homeDir,
+    CODEX_HOME: join(homeDir, '.codex'), COPILOT_HOME: join(homeDir, '.copilot'),
+  });
+  return { ...dependencies, env, gitEnv: dependencies.gitEnv ?? baseEnv, homeDir,
+    stateDir: join(homeDir, '.everything-harness'), sharedSkillsDir: join(homeDir, '.agents', 'skills') };
 }
 
 function objectKeys(value, keys, label) {
@@ -166,7 +195,7 @@ function validateRules(rules, manifest) {
   }
 }
 
-const stateDirectory = (dependencies) => dependencies.stateDir ?? join(homedir(), '.everything-harness');
+const stateDirectory = (dependencies) => dependencies.stateDir ?? join(dependencies.homeDir ?? homedir(), '.everything-harness');
 
 function migrateFragmentKey(value) {
   if (value && Object.hasOwn(value, 'fragments')) {
@@ -648,7 +677,7 @@ function executePlans(plans, options, agents, dependencies, log) {
 
 function manageManifest(options, dependencies, log) {
   const root = mkdtempSync(join(dependencies.tempDir ?? tmpdir(), 'skill-manage-'));
-  const baseEnv = dependencies.env ?? process.env;
+  const baseEnv = dependencies.gitEnv ?? dependencies.env ?? process.env;
   const env = { ...baseEnv, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never',
     GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' };
   const git = (args) => (dependencies.runGit ?? runCommand)('git', args, { cwd: root, env, timeout: 120_000 });
@@ -721,7 +750,7 @@ function makeContext(dependencies, log, agents) {
   check(agents.length > 0, '生效 agents 为空；请先用 --add_agents 设置目标，或加 --local 修改本机目标。');
   const runSkills = dependencies.runSkills ?? createSkillsRunner({ env: dependencies.env, cwd: dependencies.cwd });
   return { runSkills, installed: installedSkills(runSkills(['list', '-g', '--json'])),
-    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(homedir(), '.agents', 'skills'), agents, log };
+    sharedSkillsDir: dependencies.sharedSkillsDir ?? join(dependencies.homeDir ?? homedir(), '.agents', 'skills'), agents, log };
 }
 
 export function sync(args, dependencies = {}) {
@@ -733,6 +762,7 @@ export function sync(args, dependencies = {}) {
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
   check(major > 22 || (major === 22 && minor >= 20), '需要 Node.js ≥22.20.0。');
+  dependencies = homeDependencies(options.home, dependencies);
   if (['add', 'del', 'auto_sync'].includes(options.mode) || agentMode(options.mode)) {
     return options.local ? manageLocal(options, dependencies, log) : manageManifest(options, dependencies, log);
   }

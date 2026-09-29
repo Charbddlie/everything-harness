@@ -23,6 +23,26 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 在 node 参数末尾追加操作，Windows 放在外层双引号内。
 
+## 指定内容根目录
+
+`--home <目录>` 指定本次同步的根目录，默认用户主目录 `~`。传入后，skill、指令和本机配置分别使用该目录下的 `.agents`、`.codex`、`.copilot`、`.everything-harness`；显式目录优先于 `CODEX_HOME`、`COPILOT_HOME`。相对路径按启动目录解析，安装和检查子进程使用同一主目录。Git 发布沿用原环境的提交身份与认证。
+
+在当前工作目录执行同步，自动将所在文件夹传给 `--home`：
+
+Linux / macOS：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "$PWD"
+```
+
+Windows PowerShell：
+
+```powershell
+cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home `"$($PWD.Path)`""
+```
+
+这里的所在文件夹是运行命令时的工作目录。`--home` 可与 `--local`、`--add`、`--del`、`--list`、`--dryrun` 等模式组合；目录选择只对本次命令生效。
+
 ## 添加参数
 
 `--add` 只接收一个或两个参数：

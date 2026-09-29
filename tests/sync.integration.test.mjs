@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { createSkillsRunner, runCommand, runDryruns, sync } from '../sync.mjs';
+import { createSkillsRunner, homeDependencies, runCommand, runDryruns, sync } from '../sync.mjs';
 
 test('real npx skills shared installation and repeated overwrite in an isolated profile', {
   skip: process.env.SKILLS_INTEGRATION !== '1',
@@ -161,4 +161,30 @@ test('real npx skills shared installation and repeated overwrite in an isolated 
   assert.equal(calls.filter((args) => args[0] === 'remove').length, removalCount);
   runSkills(['remove', 'pdf-analyze', '-g', '--yes', '--agent', 'codex', 'github-copilot']);
   assert.equal(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf-analyze'), false);
+
+  // The public home option must override inherited agent paths for the real
+  // CLI, preflight subprocesses, shared lock and instruction/config writes.
+  const selectedHome = join(sandbox, 'selected home');
+  const originalInstructions = readFileSync(instructions, 'utf8');
+  const originalSettings = readFileSync(join(dependencies.stateDir, 'harness.json'), 'utf8');
+  // Git 2.25 does not honor GIT_CONFIG_GLOBAL. Keep the fixture-only URL
+  // rewrite explicit across a HOME change without copying profile config.
+  const rewrite = `url.${pathToFileURL(source).href}.insteadOf=https://github.com/integration-fixture/skills.git`;
+  const selectedEnv = { ...env, GIT_CONFIG_PARAMETERS: `${env.GIT_CONFIG_PARAMETERS ?? ''} '${rewrite.replaceAll("'", "'\\''")}'`.trim() };
+  const selectedDependencies = { env: selectedEnv, cwd: sandbox, fetchManifest: () => JSON.stringify(catalog),
+    fetchFragment: dependencies.fetchFragment, log: (message) => t.diagnostic(message) };
+  assert.equal(runCommand('git', ['config', '--get', `url.${pathToFileURL(source).href}.insteadOf`],
+    { env: homeDependencies(selectedHome, selectedDependencies).env, cwd: sandbox }).trim(), 'https://github.com/integration-fixture/skills.git');
+  sync(['--home', selectedHome], selectedDependencies);
+  assert.ok(existsSync(join(selectedHome, '.agents', 'skills', 'pdf-renamed', 'SKILL.md')));
+  assert.ok(readFileSync(join(selectedHome, '.codex', 'AGENTS.md'), 'utf8').includes('eh:new-rule:'));
+  assert.ok(readFileSync(join(selectedHome, '.copilot', 'copilot-instructions.md'), 'utf8').includes('eh:new-rule:'));
+  assert.ok(existsSync(join(selectedHome, '.everything-harness', 'harness.json')));
+  const selectedRunner = createSkillsRunner(homeDependencies(selectedHome, selectedDependencies));
+  assert.ok(JSON.parse(selectedRunner(['list', '-g', '--json'])).every((entry) => entry.path.startsWith(selectedHome)));
+  sync(['--home', selectedHome, '--local', '--del', 'rule:auto'], selectedDependencies);
+  assert.deepEqual(JSON.parse(selectedRunner(['list', '-g', '--json'])), []);
+  assert.ok(JSON.parse(runSkills(['list', '-g', '--json'])).some((entry) => entry.name === 'pdf-renamed'));
+  assert.equal(readFileSync(instructions, 'utf8'), originalInstructions);
+  assert.equal(readFileSync(join(dependencies.stateDir, 'harness.json'), 'utf8'), originalSettings);
 });

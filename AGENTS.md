@@ -9,6 +9,7 @@
 - 每个同步规则在 `sync.mjs` 注册回调。`auto` 无额外条件，`win` 检测 Windows，`learn` 检测 Windows 和显式调用。检测函数集中复用，规则成员禁止嵌套规则。普通 sync 按清单顺序走同一个 `--add rule:name` 规划与执行入口，调用上下文标记为非显式。
 - 顶层 `agents` 统一设置所有 skill 和片段的目标，支持 `codex`、`github-copilot`，默认包含两者。
 - 本机配置位于 `~/.everything-harness/harness.json`，保存 `sync-rules` 成员覆盖和可选的顶层 `agents`；每个本机规则整份覆盖同名远程规则。Skill 共用 `~/.agents/skills` 中的一份实体文件；片段写入 `${CODEX_HOME:-~/.codex}/AGENTS.md` 或 `${COPILOT_HOME:-~/.copilot}/copilot-instructions.md`。
+- `--home <目录>` 覆盖本次内容根目录，默认用户主目录。显式目录优先于 agent 目录环境变量，统一控制 `.agents`、`.codex`、`.copilot`、`.everything-harness` 及安装和检查子进程的主目录；相对路径按启动目录解析，Git 发布沿用原身份与认证环境。
 - 片段标记统一使用 `<!-- eh:<name>:start -->` / `<!-- eh:<name>:end -->`。
 
 ## sync 脚本的使用方式
