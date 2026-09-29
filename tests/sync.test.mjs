@@ -128,18 +128,50 @@ test('progress output numbers actual stages and labels warnings without hiding a
     }
   };
   f.run();
-  const stages = f.logs.map((line) => line.trim().match(/^(\d+)\. (.+)$/)).filter(Boolean);
-  assert.deepEqual(stages.map((match) => Number(match[1])), stages.map((_, index) => index + 1));
-  for (const title of ['下载 skill 源码', '检查 skill 环境', '应用 skill 到目标目录', '清理临时目录']) {
-    assert.ok(stages.some((match) => match[2] === title), title);
-  }
+  const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
+  assert.deepEqual(stages(), [
+    '1. 读取清单和本机设置', '2. 自动配置: auto',
+    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
+    '3. 确认本机设置',
+  ]);
   assert.ok(f.logs.some((line) => line.includes('[警告] [one] 失败')));
   assert.ok(f.logs.some((line) => line.includes('[通过] 覆盖安装')));
   assert.ok(f.logs.at(-1).startsWith('  [完成]'));
   f.logs.length = 0;
+  f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
   assert.throws(() => f.run(['--dryrun']), /环境检查失败/);
+  assert.deepEqual(stages(), [
+    '1. 读取清单和本机设置', '2. 自动配置: auto',
+    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 清理临时目录',
+  ]);
   assert.ok(f.logs.some((line) => line.includes('[失败] [one]')));
   assert.ok(!f.logs.some((line) => line.includes('应用 skill 到目标目录')));
+});
+
+test('automatic configuration resets subnumbering per rule and keeps later stages at the top level', (t) => {
+  const f = fixture(t, {
+    agents, skill: [entry('one'), entry('two')],
+    'sync-rules': { auto: [member('one')], win: [member('two')], learn: [] },
+  });
+  f.dependencies.platform = 'win32';
+  f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
+  f.run();
+  const stages = () => f.logs.map((line) => line.trim()).filter((line) => /^\d+\./.test(line));
+  assert.deepEqual(stages(), [
+    '1. 读取清单和本机设置',
+    '2. 自动配置: auto', '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
+    '3. 自动配置: win', '3.1 下载 skill 源码', '3.2 检查 skill 环境', '3.3 应用 skill 到目标目录', '3.4 清理临时目录',
+    '4. 自动配置: learn', '5. 确认本机设置',
+  ]);
+  assert.ok(f.logs.some((line) => line.includes('[跳过] 跳过 rule:learn')));
+  f.logs.length = 0;
+  f.dependencies.log = createProgressLogger((line) => f.logs.push(line));
+  f.run(['--local', '--add', 'rule:win']);
+  assert.deepEqual(stages(), [
+    '1. 读取清单和本机设置', '2. 自动配置: win',
+    '2.1 下载 skill 源码', '2.2 检查 skill 环境', '2.3 应用 skill 到目标目录', '2.4 清理临时目录',
+    '3. 保存本机设置',
+  ]);
 });
 
 test('download failures preserve content and never report a completed sync', (t) => {

@@ -142,7 +142,7 @@ for (const platform of ['linux', 'win32']) {
 for (const platform of ['linux', 'darwin', 'win32']) {
   test(`ordinary sync invokes all callbacks on ${platform} and never implicitly enables learn`, (t) => {
     const f = fixture(t); f.dependencies.platform = platform; f.run();
-    assert.deepEqual(f.events.filter((event) => event.startsWith('规则回调：')), ['规则回调：rule:auto', '规则回调：rule:win', '规则回调：rule:learn']);
+    assert.deepEqual(f.events.filter((event) => event.startsWith('自动配置: ')), ['自动配置: auto', '自动配置: win', '自动配置: learn']);
     assert.deepEqual([...f.installed.keys()], ['core']);
     assert.ok(f.events.includes('test:core'));
     assert.ok(!f.events.includes('test:paper'));
@@ -158,7 +158,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
       assert.ok(!f.events.some((event) => event.startsWith('test:')));
       return;
     }
-    const expected = ['规则回调：rule:learn', '检测 windows：通过', '检测 explicit：通过', 'test:paper', 'test:zotero', 'add:paper', 'add:zotero'];
+    const expected = ['自动配置: learn', '检测 windows：通过', '检测 explicit：通过', 'test:paper', 'test:zotero', 'add:paper', 'add:zotero'];
     const positions = expected.map((event) => f.events.indexOf(event));
     assert.ok(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1])));
     assert.deepEqual([...f.installed.keys()], ['paper', 'zotero']);
@@ -182,7 +182,7 @@ test('sync and explicit auto add use the same checks and installation calls', (t
   explicit.manifest['sync-rules'] = { auto: explicit.manifest['sync-rules'].auto };
   implicit.run(); explicit.run(['--local', '--add', 'rule:auto']);
   assert.deepEqual(implicit.calls, explicit.calls);
-  const phases = (f) => f.events.filter((event) => /^(规则回调|检测 |test:|add:)/.test(event));
+  const phases = (f) => f.events.filter((event) => /^(自动配置: |检测 |test:|add:)/.test(event));
   assert.deepEqual(phases(implicit), phases(explicit));
 });
 
@@ -194,7 +194,7 @@ test('rule deletion bypasses callbacks and tests and local add restores the comp
   f.run(['--local', '--del', 'rule:learn']);
   assert.equal(f.installed.size, 0);
   assert.deepEqual(f.read()['sync-rules'].learn, []);
-  assert.ok(!f.events.some((event) => event.startsWith('规则回调')));
+  assert.ok(!f.events.some((event) => event.startsWith('自动配置: ')));
   assert.ok(!f.events.some((event) => event.startsWith('检测 ')));
   f.dependencies.platform = 'win32'; f.dependencies.runDryruns = () => {};
   f.run(['--local', '--add', 'rule:learn']);
@@ -218,7 +218,7 @@ test('sync continues through all rules after a failure and reports the aggregate
   const f = fixture(t); f.dependencies.platform = 'win32';
   f.dependencies.runDryruns = (entries) => { if (entries.length) throw new Error('core failure'); };
   assert.throws(() => f.run(), /auto: core failure/);
-  assert.ok(f.events.includes('规则回调：rule:learn'));
+  assert.ok(f.events.includes('自动配置: learn'));
   assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:'));
   assert.ok(!existsSync(f.settings));
 });
@@ -227,7 +227,7 @@ test('list is read-only and dryrun follows rule conditions without installation'
   const f = fixture(t); f.dependencies.platform = 'win32';
   f.run(['--list']);
   assert.equal(f.calls.length, 0);
-  assert.ok(!f.events.some((event) => event.startsWith('规则回调')));
+  assert.ok(!f.events.some((event) => event.startsWith('自动配置: ')));
   f.run(['--dryrun']);
   assert.ok(f.events.includes('test:core'));
   assert.ok(!f.events.includes('test:paper'));
@@ -488,7 +488,7 @@ test('temporary cleanup failure does not block fragments, later rules or local s
     assert.ok(f.installed.has('core'));
     assert.ok(readFileSync(f.target, 'utf8').includes('eh:base:start'));
     assert.ok(readFileSync(f.target, 'utf8').includes('eh:win-dev:start'));
-    assert.ok(f.events.includes('规则回调：rule:learn'));
+    assert.ok(f.events.includes('自动配置: learn'));
     assert.ok(existsSync(f.settings));
     assert.ok(f.logs.some((line) => line.includes(blocked) && line.includes('继续执行')));
     assert.equal(f.logs.at(-1), '规则同步和环境检查完成。');

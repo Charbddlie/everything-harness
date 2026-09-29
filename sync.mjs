@@ -21,11 +21,15 @@ type: skill | agents-md | rule
 function check(condition, message) { if (!condition) throw new Error(message); }
 
 export function createProgressLogger(write = console.log) {
-  let step = 0;
-  return (message, { stage = false, status } = {}) => {
+  let step = 0, substep = 0;
+  return (message, { stage = false, substage = false, status } = {}) => {
     if (stage) {
-      step++;
-      write(`${step > 1 ? '\n' : ''}${step}. ${message}`);
+      if (substage) write(`\n  ${step}.${++substep} ${message}`);
+      else {
+        step++;
+        substep = 0;
+        write(`${step > 1 ? '\n' : ''}${step}. ${message}`);
+      }
       return;
     }
     const prefix = message.match(/^\[(警告|失败|跳过|通过|完成)\]\s*/);
@@ -738,11 +742,13 @@ export function checkSkills(entries, agents, dependencies, log, apply) {
   }
 }
 
-function executePlans(plans, options, agents, dependencies, log) {
+function executePlans(plans, options, agents, dependencies, parentLog) {
   if (!skillOperation(options.mode)) return true;
   for (const { rule, entries } of plans) {
-    if (options.mode === 'add' && rule) {
-      log(`规则回调：rule:${rule}`, { stage: true });
+    const grouped = options.mode === 'add' && rule;
+    if (grouped) parentLog(`自动配置: ${rule}`, { stage: true });
+    const log = grouped ? (message, metadata = {}) => parentLog(message, { ...metadata, substage: true }) : parentLog;
+    if (grouped) {
       const passed = RULE_CALLBACKS.get(rule)({ explicit: options.explicit !== false, platform: dependencies.platform ?? process.platform, log });
       if (!passed) { log(`跳过 rule:${rule}：检测条件未满足。`, { status: '跳过' }); return false; }
     }
@@ -855,7 +861,7 @@ export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? (options.help || options.mode === 'list' ? console.log : createProgressLogger());
   if (options.help) {
-    log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n--add 单参数使用 type:name；双参数为 owner/repo skill:name，自有 skill 默认来源为 ${OWN_SOURCE}。\n--local：仅本机安装和规则覆盖；省略时修改远程清单并 commit / push。\nrule:auto 无额外条件；rule:win 检测 Windows；rule:learn 检测 Windows 与显式调用。\n同步依次执行各规则的 add：规则回调 → 检测函数 → 全部 skill 测试 → 批量安装。del 跳过规则检测和 skill 测试。\n--auto_sync：兼容开关入口，通过 sync-rules 调整成员。\n--list 保持只读；--dryrun 检测规则和 skill 环境，保留本机安装。\n支持的 agent：${[...AGENTS.keys()].join(', ')}`);
+    log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n--add 单参数使用 type:name；双参数为 owner/repo skill:name，自有 skill 默认来源为 ${OWN_SOURCE}。\n--local：仅本机安装和规则覆盖；省略时修改远程清单并 commit / push。\nrule:auto 无额外条件；rule:win 检测 Windows；rule:learn 检测 Windows 与显式调用。\n同步依次执行各规则的 add：自动配置 → 检测函数 → 全部 skill 测试 → 批量安装。del 跳过规则检测和 skill 测试。\n--auto_sync：兼容开关入口，通过 sync-rules 调整成员。\n--list 保持只读；--dryrun 检测规则和 skill 环境，保留本机安装。\n支持的 agent：${[...AGENTS.keys()].join(', ')}`);
     return;
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
