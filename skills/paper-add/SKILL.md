@@ -5,13 +5,12 @@ description: 把论文存进 Zotero —— 抓元数据、下 PDF、建成 ZotMo
 
 # 加文献进 Zotero
 
-安装后用本 skill 的 `dryrun.mjs` 检查 conda base Python、Zotero 附件目录和 API 凭据；不联网、不修改文献库。保留现有 Python 脚本，使用标准库，无需安装额外包。命令中的 `~/.claude/skills/paper-add` 应替换为当前加载的 skill 目录（Codex / Copilot 通常在 `~/.agents/skills/paper-add`）。
-
+`.${harness}`为此skill所在的harness路径
 一条命令搞定：**元数据 → PDF → LABD → linked_file 附件**。
 
 ```bash
 "C:/Users/ShuttleMan/miniconda3/python.exe" \
-  ~/.claude/skills/paper-add/scripts/zotero_add.py <来源> [--collection 分类] [--tag 标签]
+  ~/.${harness}/skills/paper-add/scripts/zotero_add.py <来源> [--collection 分类] [--tag 标签]
 ```
 
 `<来源>` 可以是 arXiv id（`2608.27287`）、arXiv 链接（abs / pdf 都行）、DOI，或 doi.org 链接。
@@ -68,7 +67,7 @@ paper-read 的 `zotero_link.py add <pdf> --parent <key>` 挂上去。
 ```bash
 for id in 2608.27287 2605.10906 2505.24298; do
   "C:/Users/ShuttleMan/miniconda3/python.exe" \
-    ~/.claude/skills/paper-add/scripts/zotero_add.py "$id" --collection autoEvolve
+    ~/.${harness}/skills/paper-add/scripts/zotero_add.py "$id" --collection autoEvolve
 done
 ```
 
@@ -87,7 +86,7 @@ done
 
 配置真值（LABD、dataDir）在
 `C:\Users\ShuttleMan\AppData\Roaming\Zotero\Zotero\Profiles\rmgu60eo.default\prefs.js`，
-脚本每次运行都从这里读。API key 从 `~/.claude.json` 的 zotero MCP 配置里取。
+脚本每次运行都从这里读。Zotero 凭据依次从环境变量、当前 skill 根目录的 `key.env`、`~\.claude.json` 的 Zotero MCP 配置补齐。运行 **zotero-init** 会自动为当前 harness 实际使用的 paper skill 创建或更新 `key.env`，同步覆盖后可重新运行恢复。
 两处都不要在别处写死。
 
 读论文、解析 PDF、写笔记回库 → 用 **paper-read** 技能。

@@ -1,11 +1,11 @@
 ---
 name: paper-read
-description: 定位或下载论文 PDF、用 MinerU 解析为 Markdown、按类型输出结构化解读，并把笔记写回 Zotero 子笔记。当用户说「读一下 X 论文」「解析我库里那篇 X」「下载 X 这篇文章」「把这篇文献总结一下」「记一下笔记」时使用。只是要把论文存进 Zotero 而不读，用 paper-add。
+description: 定位或下载论文 PDF、用 MinerU 解析为 Markdown、按类型输出结构化解读，并把笔记写回 Zotero 子笔记。当用户说「读一下 X」「解析我库里那篇 X」「下载 X 这篇文章」「把这篇文献总结一下」「记一下笔记」时使用。只是要把论文存进 Zotero 而不读，用 paper-add。
 ---
 
 # 读论文
 
-安装后用本 skill 的 `dryrun.mjs` 检查 conda base Python、Zotero 附件目录、Zotero 与 MinerU 凭据；不上传 PDF、不调用计费 API、不修改文献库。保留现有 Python 标准库脚本。命令中的 `~/.claude/skills` 应替换为当前加载的 skills 目录（Codex / Copilot 通常在 `~/.agents/skills`）。
+`.${harness}`为此skill所在的harness路径
 
 拿到 PDF 的本地绝对路径 → MinerU 解析成 Markdown 缓存到 `~/.mineru/` → 读缓存 → 结构化解读。
 
@@ -26,6 +26,8 @@ LABD 与 ZotMoov `dst_dir` 同值。配置真值在
 `C:\Users\ShuttleMan\AppData\Roaming\Zotero\Zotero\Profiles\rmgu60eo.default\prefs.js`
 （`baseAttachmentPath` / `zotmoov.dst_dir` / `dataDir` / `sync.storage.enabled`），
 脚本每次运行都从这里读，不要在别处写死路径。
+
+Zotero 凭据依次从环境变量、当前 skill 根目录的 `key.env`、`~\.claude.json` 的 Zotero MCP 配置补齐。运行 **zotero-init** 会自动为当前 harness 实际使用的 paper skill 创建或更新 `key.env`，保留其中的 `MINERU_API_KEY`；同步覆盖后可重新运行恢复。
 
 ## ⚠️ 入库的硬约束
 
@@ -67,7 +69,7 @@ zotero_get_item_children(item_key=["N9YDDF9V", "P9R4WBVQ"])
 
 ```bash
 "C:/Users/ShuttleMan/miniconda3/python.exe" \
-  ~/.claude/skills/paper-read/scripts/zotero_link.py resolve <条目key或附件key>
+  ~/.${harness}/skills/paper-read/scripts/zotero_link.py resolve <条目key或附件key>
 ```
 
 传父条目 key 即可（自动挑 PDF 附件）。最后一行打印绝对路径，就用它。
@@ -91,7 +93,7 @@ LABD 里的绝对路径，拿去解析：
 
 ```bash
 "C:/Users/ShuttleMan/miniconda3/python.exe" \
-  ~/.claude/skills/paper-add/scripts/zotero_add.py 2505.24298 --collection autoEvolve
+  ~/.${harness}/skills/paper-add/scripts/zotero_add.py 2505.24298 --collection autoEvolve
 ```
 
 **绝不要**让 `zotero_add_item` 上传 PDF（原因见下面那条硬约束）。只有在来源是
@@ -104,7 +106,7 @@ ISBN / BibTeX / 网页这类 `zotero_add.py` 不认的情况下才用它，且�
 
 ```bash
 "C:/Users/ShuttleMan/miniconda3/python.exe" \
-  ~/.claude/skills/paper-read/scripts/mineru_parse.py "<PDF 绝对路径>"
+  ~/.${harness}/skills/paper-read/scripts/mineru_parse.py "<PDF 绝对路径>"
 ```
 
 优先读环境变量 `MINERU_API_KEY`，也支持当前 skill 目录中的本机 `key.env`（不随仓库分发，覆盖更新可能清除，推荐环境变量）。调 MinerU Precision API

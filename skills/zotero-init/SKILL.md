@@ -1,17 +1,27 @@
 ---
 name: zotero-init
-description: 引导用户完成 Zotero 与 Claude Code 的完整打通——ZotMoov 插件安装、附件目录与链接基准目录设置、zotero-mcp 独立 conda 环境安装、本地/Web API 选择与 MCP 注册。当用户提到「配置 Zotero」「接 Zotero」「zotero mcp」「zotmoov」「附件目录」「文献库连不上」时使用。
+description: 引导用户完成 Zotero 与 Codex、GitHub Copilot CLI、Claude Code 的接入——ZotMoov 插件安装、附件目录设置、zotero-mcp 独立 conda 环境安装、MCP 注册，并自动为 paper skill 配置 key.env。当用户提到「配置 Zotero」「接 Zotero」「zotero mcp」「zotmoov」「附件目录」「文献库连不上」时使用。
 ---
 
 # Zotero 接入初始化
 
-把用户的 Zotero 库接到 Claude Code，分两块：**ZotMoov**（让附件落到人类可读的固定目录，Claude 才能直接读 PDF）+ **zotero-mcp**（元数据检索与写操作）。
+把用户的 Zotero 库接到 Codex、GitHub Copilot CLI 或 Claude Code，分两块：**ZotMoov**（让附件落到人类可读的固定目录，agent 可以直接读取）+ **zotero-mcp**（元数据检索与写操作）。Paper 脚本通过各自 skill 内的 `key.env` 使用 Zotero Web API。
 
 **核心原则：先探测，再动手。** 每一步都可能已经做过了。不要让用户重复操作已完成的步骤——先跑第 0 步，再按缺什么补什么。GUI 步骤无法自动化，必须让用户手动点；其余全部由你代劳。
 
 ## 第 0 步：探测现状
 
 一次性跑完，再决定后面做什么：
+
+先根据当前会话身份确定正在使用的 harness（Codex、GitHub Copilot CLI 或 Claude Code），再通过当前 session 的 skill 清单和实际 `SKILL.md` 路径确认它使用的 skill 安装目录。本次只配置当前 harness；客户端配置尊重 `CODEX_HOME`、`COPILOT_HOME` 或显式配置目录。以下表格列的是默认用户级位置。
+
+| 客户端 | MCP 配置 | 注册检查 |
+|---|---|---|
+| Codex | `~\.codex\config.toml` 的 `mcp_servers.zotero` | `codex mcp list` |
+| GitHub Copilot CLI | `~\.copilot\mcp-config.json` 的 `mcpServers.zotero` | `copilot mcp list`，或会话内 `/mcp` |
+| Claude Code | `~\.claude.json` 的 `mcpServers.zotero` | `claude mcp list` |
+
+检查当前 harness 实际使用的 `paper-add`、`paper-read` 是否有 `key.env`，只报告所需键是否齐全。凭据可从进程环境变量、这些 skill 的 `key.env`、当前 harness 的 Zotero MCP `env` 中复用；冲突时先确认要使用的文库。检查配置时隐藏密钥值。
 
 ```bash
 # Zotero profile（prefs.js 在 profile 里，不在数据目录里）
@@ -30,8 +40,6 @@ ls "$P/extensions"
 # 本地 API 是否通（200=通，403=没开权限，000=Zotero 没运行）
 curl -s -m 8 -o /dev/null -w "local API: %{http_code}\n" "http://localhost:23119/api/users/0/items?limit=1"
 
-# MCP 是否已注册
-claude mcp list 2>&1 | grep -i zotero
 ```
 
 对照读数：
@@ -73,7 +81,7 @@ mv "$P/prefs.js.tmp" "$P/prefs.js"
 
 ## 第 1 步：ZotMoov（若 `dst_dir` 缺失）
 
-ZotMoov 把附件从 `storage/ABCD1234/xxx.pdf` 搬到 `<你的目录>/Cao 等 - 2026 - Qwen3-Coder Technical Report.pdf`，并在 Zotero 里改成链接。这样 Claude Code 能用 Read 直接读 PDF，路径还自带作者年份标题。
+ZotMoov 把附件从 `storage/ABCD1234/xxx.pdf` 搬到 `<你的目录>/Cao 等 - 2026 - Qwen3-Coder Technical Report.pdf`，并在 Zotero 里改成链接。这样 agent 可以按作者、年份和标题定位 PDF。
 
 告诉用户手动做（这几步没法自动化）：
 
@@ -149,6 +157,8 @@ $CONDA/envs/zotero-mcp/Scripts/zotero-mcp.exe version
 
 **推荐先本地**，需要写操作时再切 Web——切换只是改 `ZOTERO_LOCAL` 一个字。
 
+`paper-add` 和 `paper-read` 的 Zotero 脚本始终使用 Web API。需要使用这些脚本时，即使 MCP 选择本地模式，也要取得有个人库读写权限的 API key 和 library ID，供第 6 步写入 `key.env`。仅配置本地只读 MCP 且没有凭据时，明确告知 paper 脚本尚未就绪，取得凭据后再完成该步骤。
+
 ### 本地
 
 Zotero → **编辑 → 设置 → 高级** → 勾选 **「允许此计算机上的其他应用程序与 Zotero 通信」**。
@@ -173,37 +183,72 @@ curl -s "https://api.zotero.org/keys/<KEY>"   # 返回里的 userID 就是 libra
 
 ## 第 5 步：注册 MCP
 
-```bash
-claude mcp add zotero --scope user \
-  --env ZOTERO_LOCAL=true \
-  -- "C:/Users/$USERNAME/miniconda3/envs/zotero-mcp/Scripts/zotero-mcp.exe"
+为第 0 步识别的当前 harness 注册。通过 `conda info --base` 和 `conda env list` 找到实际环境，使用 `zotero-mcp` 可执行文件的绝对路径。以下是 PowerShell 命令：
+
+```powershell
+$McpExe = '<zotero-mcp 环境>\Scripts\zotero-mcp.exe'
+$McpEnv = @('--env', 'ZOTERO_LOCAL=true')
 ```
 
-Web API 则改为：
+Web 模式先把已确认的凭据载入当前进程的 `ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`，再将 `$McpEnv` 改为：
 
-```bash
-claude mcp add zotero --scope user \
-  --env ZOTERO_LOCAL=false \
-  --env ZOTERO_API_KEY=<KEY> \
-  --env ZOTERO_LIBRARY_ID=<ID> \
-  --env ZOTERO_LIBRARY_TYPE=user \
-  -- "C:/Users/$USERNAME/miniconda3/envs/zotero-mcp/Scripts/zotero-mcp.exe"
+```powershell
+$McpEnv = @(
+  '--env', 'ZOTERO_LOCAL=false',
+  '--env', "ZOTERO_API_KEY=$env:ZOTERO_API_KEY",
+  '--env', "ZOTERO_LIBRARY_ID=$env:ZOTERO_LIBRARY_ID",
+  '--env', 'ZOTERO_LIBRARY_TYPE=user'
+)
 ```
 
-要点：
+根据当前 harness 只执行下面对应的一条命令，然后检查退出码：
 
-- **必须写 exe 绝对路径**。conda 环境的 `Scripts` 不在 PATH 上，写 `zotero-mcp` 会找不到。
-- `--scope user` 写进 `~/.claude.json`，所有项目可用。
-- 重复注册要先 `claude mcp remove zotero --scope user`。
-- 用了 Web API 就提醒一句：key 明文存在 `~/.claude.json` 里，如果那文件会同步/分享出去，记得去 settings/keys 撤销重发。
-
-## 第 6 步：验收
-
-```bash
-claude mcp list 2>&1 | grep -i zotero   # 期望 ✔ Connected
+```powershell
+codex mcp add zotero @McpEnv -- $McpExe
+copilot mcp add zotero @McpEnv -- $McpExe
+claude mcp add zotero --scope user @McpEnv -- $McpExe
 ```
 
-`✔ Connected` 只说明进程能起来，**不代表能读到数据**。必须再实测一次真实查询：
+已有注册与预期一致时保留；需要修改时，仅更新当前 harness 配置中的 Zotero 条目，保留其他服务及设置。Claude CLI 重复添加前执行 `claude mcp remove zotero --scope user`。注册失败时报告原始错误。
+
+若当前 Copilot 版本没有 `copilot mcp add`，直接合并写入生效的 `mcp-config.json`。本地模式条目如下，`command` 替换为真实绝对路径；Web 模式的 `env` 使用上面的四个环境变量：
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "type": "local",
+      "command": "C:\\path\\to\\zotero-mcp.exe",
+      "args": [],
+      "env": { "ZOTERO_LOCAL": "true" },
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+配置格式参考：[Codex MCP](https://developers.openai.com/codex/mcp)、[Copilot CLI MCP](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)。
+
+## 第 6 步：自动写入 paper skill 凭据
+
+取得并验证凭据后，由 agent 自动执行；已有 MCP 注册也要补齐此步骤：
+
+1. 使用第 0 步确认的路径，仅定位当前 harness 实际加载的 `paper-add`、`paper-read`。按各自的 `SKILL.md` 所在目录写入，同一真实目录只处理一次；当前 harness 使用共享 `.agents\skills` 时就写入该共享目录。范围以实际加载路径为准，不遍历其他 harness 的 skill 副本。尚未安装的 skill 明确报告，安装后再补写。
+2. 在每个已安装 skill 的根目录创建或更新 `key.env`，使用 UTF-8 无 BOM，写入下面两个键的真实值（裸值，不加引号）。按键替换已有值，保留其他配置与注释，尤其是 `paper-read` 的 `MINERU_API_KEY`。
+3. 回读确认两个键与本次凭据一致；失败时报告具体路径和错误。完成后仅报告写入路径及状态。
+
+```dotenv
+ZOTERO_API_KEY=<已验证的 API key>
+ZOTERO_LIBRARY_ID=<对应的 userID>
+```
+
+这些文件位于本机安装目录，凭据留在本机；MCP 配置和 `key.env` 均含明文密钥，分享时应脱敏。Skill 同步覆盖可能清除 `key.env`，同步后在对应 harness 中重新运行本初始化流程，从该 harness 的 MCP 配置或环境变量恢复。
+
+## 第 7 步：验收
+
+按当前 harness 检查：Codex 使用 `codex mcp list` 和会话内 `/mcp`；Copilot 使用 `/mcp`；Claude 使用 `claude mcp list`。直接修改配置或通过外部 CLI 注册后，新开该客户端会话加载；Copilot 会话内 `/mcp add` 保存后立即生效。
+
+列表中出现服务只说明配置存在。还要确认 MCP 已连接并执行一次真实的 Zotero 检索；空文库可用成功的空结果验收。API 可独立检查：
 
 ```bash
 # 本地
@@ -213,9 +258,9 @@ curl -s "http://localhost:23119/api/users/0/items/top?limit=2" | head -c 300
 curl -s -H "Zotero-API-Key: <KEY>" "https://api.zotero.org/users/<ID>/items/top?limit=2" | head -c 300
 ```
 
-能看到真实标题才算通。
+对每个已写入 `key.env` 的 paper skill，用 Python `runpy.run_path` 加载 `scripts\zotero_add.py` 或 `scripts\zotero_link.py`，只调用 `load_credentials()`，与本次凭据比较且不输出值。检查时在该子进程中移除 `ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`，并将 `load_credentials.__globals__["CLAUDE_JSON"]` 指向临时目录下不存在的文件，确保凭据来自该 skill 的 `key.env`。加载失败或不一致时，修正后再验收。
 
-最后告诉用户：**MCP 不会热加载，要新开一个 Claude Code 会话**才能用。然后给几个可以直接说的例子：
+最后报告当前 harness、连接状态、已写入的 `key.env` 路径和未完成项。可以直接说：
 
 - 「搜一下我 Zotero 里关于 XX 的文献」
 - 「把这篇 DOI 加进我的库：10.xxxx/xxxxx」
