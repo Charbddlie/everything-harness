@@ -48,8 +48,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8")
 
 PREFS = os.path.expandvars(r"%APPDATA%\Zotero\Zotero\Profiles\rmgu60eo.default\prefs.js")
-CLAUDE_JSON = os.path.expanduser(r"~\.claude.json")
-KEY_ENV = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "key.env")
+KEY_ENV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "key.env")
 
 API = "https://api.zotero.org"
 LOCAL_API = "http://127.0.0.1:23119/api/users/0"
@@ -107,40 +106,34 @@ def read_prefs(path=PREFS):
 
 
 def load_credentials():
-    """API key / library id：优先 env，其次 key.env，最后 ~/.claude.json 里的 MCP 配置。"""
-    key = os.environ.get("ZOTERO_API_KEY")
-    lib = os.environ.get("ZOTERO_LIBRARY_ID")
+    """优先读取环境变量，再从脚本旁的 key.env 补齐。"""
+    key = os.environ.get("ZOTERO_API_KEY", "").strip()
+    lib = os.environ.get("ZOTERO_LIBRARY_ID", "").strip()
 
     env_path = os.path.normpath(KEY_ENV)
     if (not key or not lib) and os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as fh:
+        with open(env_path, encoding="utf-8-sig") as fh:
             for line in fh:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
                 if k.strip() == "ZOTERO_API_KEY" and not key:
-                    key = v.strip()
+                    key = v.strip().strip('"').strip("'").strip()
                 elif k.strip() == "ZOTERO_LIBRARY_ID" and not lib:
-                    lib = v.strip()
+                    lib = v.strip().strip('"').strip("'").strip()
 
-    if (not key or not lib) and os.path.exists(CLAUDE_JSON):
-        try:
-            with open(CLAUDE_JSON, encoding="utf-8") as fh:
-                cfg = json.load(fh)
-            env = cfg.get("mcpServers", {}).get("zotero", {}).get("env", {})
-            key = key or env.get("ZOTERO_API_KEY")
-            lib = lib or env.get("ZOTERO_LIBRARY_ID")
-        except (ValueError, OSError):
-            pass
-
-    if not key or not lib:
-        die("找不到 ZOTERO_API_KEY / ZOTERO_LIBRARY_ID，设成环境变量或写进 key.env。")
+    missing = [name for name, value in (
+        ("ZOTERO_API_KEY", key), ("ZOTERO_LIBRARY_ID", lib),
+    ) if not value]
+    if missing:
+        die("缺少配置项：%s；请补全 %s" % (", ".join(missing), env_path))
     return key, lib
 
 
 class Ctx(object):
     def __init__(self):
+        self.api_key, self.library = load_credentials()
         prefs = read_prefs()
         self.labd = prefs.get("extensions.zotero.baseAttachmentPath")
         if not self.labd:
@@ -148,7 +141,6 @@ class Ctx(object):
                 "先在 Zotero 设置里配好链接附件基准目录。")
         if not os.path.isdir(self.labd):
             die("链接附件基准目录不存在：%s" % self.labd)
-        self.api_key, self.library = load_credentials()
         self._collections = None
 
     def url(self, path):

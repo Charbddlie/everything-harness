@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, 
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { parseArgs } from 'node:util';
+import { parseArgs, parseEnv } from 'node:util';
 import { crc32, inflateRawSync } from 'node:zlib';
 
 const API_BASE = 'https://mineru.net/api/v4';
@@ -12,19 +12,11 @@ const CURL = process.platform === 'win32' ? 'curl.exe' : 'curl';
 const FAILED = new Set(['failed', 'error', 'canceled', 'cancelled', 'timeout']);
 
 export function getApiKey(env = process.env) {
-  const key = env.MINERU_API_KEY?.trim();
-  if (!key) throw new Error('环境变量缺少MINERU_API_KEY');
+  const path = join(import.meta.dirname, 'key.env');
+  const key = env.MINERU_API_KEY?.trim()
+    || (existsSync(path) ? parseEnv(readFileSync(path, 'utf8')).MINERU_API_KEY?.trim() : '');
+  if (!key) throw new Error(`缺少配置项：MINERU_API_KEY；请补全 ${path}`);
   return key;
-}
-
-export function environmentIssues({ env = process.env, version = process.versions.node, probe = spawnSync } = {}) {
-  const errors = [];
-  const [major, minor] = version.split('.').map(Number);
-  if (!(major > 22 || (major === 22 && minor >= 20))) errors.push('需要 Node.js ≥22.20.0');
-  try { getApiKey(env); } catch (error) { errors.push(error.message); }
-  const curl = probe(CURL, ['--version'], { env, encoding: 'utf8', windowsHide: true, timeout: 5000 });
-  if (curl.error || curl.status !== 0) errors.push('找不到可用的 curl，请安装并加入 PATH');
-  return errors;
 }
 
 function curl(args, { input, timeout = 60, secret = '' } = {}) {

@@ -17,11 +17,17 @@ description: 管理 eh 的本机同步范围与 harness 目标，以及新建、
    - 全新 skill：编写 `SKILL.md` 初稿及所需资源。
   agents-md 片段通过新建或复制已有内容准备，暂存到 `.agents/agents-md/<name>.md`。
 3. 告诉用户待编辑文件的绝对路径，请用户二次编辑，然后暂停，等待用户明确表示编辑完成。
-4. 用户确认完成后，审阅内容及引用资源，将 skill 整个目录移动到 `skills/<name>/`，将 agents-md 片段移动到 `agents-md/<name>.md`。包含脚本的自有 skill 同步提供或更新 `dryrun.mjs`，检查范围限于环境与配置。
+4. 用户确认完成后，审阅内容及引用资源，将 skill 整个目录移动到 `skills/<name>/`，将 agents-md 片段移动到 `agents-md/<name>.md`。
 5. 在 `harness.json` 中登记内容：skill 的 `source` 使用 `Charbddlie/everything-harness`，agents-md 登记 `name`；按预期同步范围维护 `sync-rules`。
-6. 检查 skill 结构、资源引用和适用的 dryrun，运行 `node --test`。暂存内容、下载缓存、锁文件和凭据留在提交范围之外。
+6. 检查 skill 结构与资源引用。暂存内容、下载缓存、锁文件和凭据留在提交范围之外。
 7. 执行 commit push。
 8. 推送成功后，按下文“确认范围”确定当前 session 的内容 home，在 eh 根目录执行一次 `node sync.mjs --home "<session 的内容 home 绝对路径>"`，同步本机 skill 和 agents-md，并告知用户同步结果。
+
+## Skill 凭据
+
+依赖 key 的 skill 在 `SKILL.md` 中列出键名、用途和获取方式。凭据保存到当前 harness 实际使用的 `<skill>\scripts\key.env`，使用 UTF-8、每行 `KEY=value`。脚本优先读取环境变量，再从该文件补齐；缺失时以非零状态退出，报告缺失键名和文件路径。
+
+运行时收到缺少 key 的错误，agent 自动生成或查询可取得的值；外部服务密钥向用户询问并提供获取入口。按键补全文件、保留其他配置与注释，再重试原命令。仅报告处理结果和路径，密钥留在本机。其他运行错误按原始原因处理。
 
 ## 确认范围
 
@@ -57,7 +63,7 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 | --- | --- |
 | 无参数 | 按清单顺序执行同步规则 |
 | `--list` | 显示远程内容、本机覆盖、agents 和删除项 |
-| `--dryrun` | 只下载并检查；失败返回非零，不修改正式安装、片段和配置 |
+| `--dryrun` | 下载、校验源码结构并预览操作，保留正式安装、片段和配置 |
 | `--clean` | 清理本机项目内容及整个 `.everything-harness` 配置目录；可加 `--dryrun` 预览 |
 | `--add skill:NAME` | 将清单中的 skill 加入本机同步范围并同步 |
 | `--add agents-md:NAME` | 将清单中的片段加入本机同步范围并同步 |
@@ -97,7 +103,7 @@ Skill 每次同步完整覆盖，清理目标内的过时文件，保留清单�
 
 同步以“完成”步骤收尾，按需列出“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态按 harness 定义检查。未命中、失败、成员为空的规则及 `--dryrun` 中的规则均未应用。本机空数组会覆盖远程规则，界面会提示成员为空；`--add rule:auto` 可恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
 
-dryrun 环境检查仅适用于自有来源，自有 skill 包含脚本时必须提供 `dryrun.mjs`。第三方 skill 完成源码结构校验后直接应用。检查只验证环境与配置，不上传文件或调用业务、计费 API。普通同步和 add 中，环境检查未通过只报告警告，仍应用内容并保存设置；显式 `--dryrun` 检查源码结构和自有 skill 环境，保留正式安装，检查失败返回非零。
+所有来源的 skill 完成源码结构校验后直接应用。`--dryrun` 下载、校验源码结构并预览操作，保留正式安装与配置；校验失败返回非零。
 
 临时源码位于用户主目录的 `~/temp`，不随 `--home` 改变。临时目录、写入暂存文件或替换备份删除失败时，报告具体失败路径和残留位置，继续后续步骤；不会覆盖此前的操作错误。下载、结构校验、复制和正式内容删除失败仍中止对应操作。
 

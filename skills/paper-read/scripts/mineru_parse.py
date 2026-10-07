@@ -37,28 +37,25 @@ def load_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return values
 
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, value = stripped.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        values[key.strip()] = value.strip().strip('"').strip("'").strip()
     return values
 
 
 def get_api_key(script_path: Path) -> str:
-    env_key = os.environ.get("MINERU_API_KEY")
+    env_key = os.environ.get("MINERU_API_KEY", "").strip()
     if env_key:
         return env_key
 
-    skill_dir = script_path.resolve().parents[1]
-    env_values = load_env_file(skill_dir / "key.env")
+    env_path = script_path.resolve().parent / "key.env"
+    env_values = load_env_file(env_path)
     api_key = env_values.get("MINERU_API_KEY")
     if not api_key:
-        raise SystemExit(
-            "MINERU_API_KEY was not found in the environment or "
-            f"{skill_dir / 'key.env'}"
-        )
+        raise SystemExit(f"缺少配置项：MINERU_API_KEY；请补全 {env_path}")
     return api_key
 
 
@@ -363,8 +360,8 @@ def main() -> int:
         print(f"Using cached MinerU output: {output_dir}")
         return 0
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     api_key = get_api_key(Path(__file__))
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     upload_response = create_upload_task(
         api_key=api_key,

@@ -5,7 +5,7 @@ description: 引导用户完成 Zotero 与 Codex、GitHub Copilot CLI、Claude C
 
 # Zotero 接入初始化
 
-把用户的 Zotero 库接到 Codex、GitHub Copilot CLI 或 Claude Code，分两块：**ZotMoov**（让附件落到人类可读的固定目录，agent 可以直接读取）+ **zotero-mcp**（元数据检索与写操作）。Paper 脚本通过各自 skill 内的 `key.env` 使用 Zotero Web API。
+把用户的 Zotero 库接到 Codex、GitHub Copilot CLI 或 Claude Code，分两块：**ZotMoov**（让附件落到人类可读的固定目录，agent 可以直接读取）+ **zotero-mcp**（元数据检索与写操作）。Paper 脚本通过各自 skill 的 `scripts\key.env` 使用 Zotero Web API。
 
 **核心原则：先探测，再动手。** 每一步都可能已经做过了。不要让用户重复操作已完成的步骤——先跑第 0 步，再按缺什么补什么。GUI 步骤无法自动化，必须让用户手动点；其余全部由你代劳。
 
@@ -21,7 +21,7 @@ description: 引导用户完成 Zotero 与 Codex、GitHub Copilot CLI、Claude C
 | GitHub Copilot CLI | `~\.copilot\mcp-config.json` 的 `mcpServers.zotero` | `copilot mcp list`，或会话内 `/mcp` |
 | Claude Code | `~\.claude.json` 的 `mcpServers.zotero` | `claude mcp list` |
 
-检查当前 harness 实际使用的 `paper-add`、`paper-read` 是否有 `key.env`，只报告所需键是否齐全。凭据可从进程环境变量、这些 skill 的 `key.env`、当前 harness 的 Zotero MCP `env` 中复用；冲突时先确认要使用的文库。检查配置时隐藏密钥值。
+检查当前 harness 实际使用的 `paper-add`、`paper-read` 是否有 `scripts\key.env`，只报告所需键是否齐全。凭据可从进程环境变量、这些文件、当前 harness 的 Zotero MCP `env` 中复用；冲突时先确认要使用的文库。缺少 `ZOTERO_API_KEY` 时向用户询问，缺少 `ZOTERO_LIBRARY_ID` 时用 API key 自动查询 `userID`。检查配置时隐藏密钥值。
 
 ```bash
 # Zotero profile（prefs.js 在 profile 里，不在数据目录里）
@@ -157,7 +157,7 @@ $CONDA/envs/zotero-mcp/Scripts/zotero-mcp.exe version
 
 **推荐先本地**，需要写操作时再切 Web——切换只是改 `ZOTERO_LOCAL` 一个字。
 
-`paper-add` 和 `paper-read` 的 Zotero 脚本始终使用 Web API。需要使用这些脚本时，即使 MCP 选择本地模式，也要取得有个人库读写权限的 API key 和 library ID，供第 6 步写入 `key.env`。仅配置本地只读 MCP 且没有凭据时，明确告知 paper 脚本尚未就绪，取得凭据后再完成该步骤。
+`paper-add` 和 `paper-read` 的 Zotero 脚本始终使用 Web API。需要使用这些脚本时，即使 MCP 选择本地模式，也要取得有个人库读写权限的 API key 和 library ID，供第 6 步写入 `scripts\key.env`。仅配置本地只读 MCP 且没有凭据时，明确告知 paper 脚本尚未就绪，取得凭据后再完成该步骤。
 
 ### 本地
 
@@ -233,8 +233,8 @@ claude mcp add zotero --scope user @McpEnv -- $McpExe
 
 取得并验证凭据后，由 agent 自动执行；已有 MCP 注册也要补齐此步骤：
 
-1. 使用第 0 步确认的路径，仅定位当前 harness 实际加载的 `paper-add`、`paper-read`。按各自的 `SKILL.md` 所在目录写入，同一真实目录只处理一次；当前 harness 使用共享 `.agents\skills` 时就写入该共享目录。范围以实际加载路径为准，不遍历其他 harness 的 skill 副本。尚未安装的 skill 明确报告，安装后再补写。
-2. 在每个已安装 skill 的根目录创建或更新 `key.env`，使用 UTF-8 无 BOM，写入下面两个键的真实值（裸值，不加引号）。按键替换已有值，保留其他配置与注释，尤其是 `paper-read` 的 `MINERU_API_KEY`。
+1. 使用第 0 步确认的路径，仅定位当前 harness 实际加载的 `paper-add`、`paper-read`。以各自的 `SKILL.md` 所在目录为 skill 根目录，同一真实目录只处理一次；当前 harness 使用共享 `.agents\skills` 时就定位到该共享目录。范围以实际加载路径为准，不遍历其他 harness 的 skill 副本。尚未安装的 skill 明确报告，安装后再补写。
+2. 在这些 skill 的 `scripts\key.env` 创建或更新凭据，使用 UTF-8 无 BOM，写入下面两个键的真实值（裸值，不加引号）。按键替换已有值，保留其他配置与注释，尤其是 `paper-read` 的 `MINERU_API_KEY`。
 3. 回读确认两个键与本次凭据一致；失败时报告具体路径和错误。完成后仅报告写入路径及状态。
 
 ```dotenv
@@ -242,7 +242,7 @@ ZOTERO_API_KEY=<已验证的 API key>
 ZOTERO_LIBRARY_ID=<对应的 userID>
 ```
 
-这些文件位于本机安装目录，凭据留在本机；MCP 配置和 `key.env` 均含明文密钥，分享时应脱敏。Skill 同步覆盖可能清除 `key.env`，同步后在对应 harness 中重新运行本初始化流程，从该 harness 的 MCP 配置或环境变量恢复。
+这些文件位于本机安装目录，凭据留在本机；MCP 配置和 `scripts\key.env` 均含明文密钥，分享时应脱敏。Skill 同步覆盖可能清除该文件，同步后在对应 harness 中重新运行本初始化流程，从该 harness 的 MCP 配置或环境变量恢复。
 
 ## 第 7 步：验收
 
@@ -258,7 +258,7 @@ curl -s "http://localhost:23119/api/users/0/items/top?limit=2" | head -c 300
 curl -s -H "Zotero-API-Key: <KEY>" "https://api.zotero.org/users/<ID>/items/top?limit=2" | head -c 300
 ```
 
-对每个已写入 `key.env` 的 paper skill，用 Python `runpy.run_path` 加载 `scripts\zotero_add.py` 或 `scripts\zotero_link.py`，只调用 `load_credentials()`，与本次凭据比较且不输出值。检查时在该子进程中移除 `ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`，并将 `load_credentials.__globals__["CLAUDE_JSON"]` 指向临时目录下不存在的文件，确保凭据来自该 skill 的 `key.env`。加载失败或不一致时，修正后再验收。
+对每个已写入 `scripts\key.env` 的 paper skill，用 Python `runpy.run_path` 加载 `scripts\zotero_add.py` 或 `scripts\zotero_link.py`，只调用 `load_credentials()`，与本次凭据比较且不输出值。检查子进程先移除 `ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID` 环境变量，确认凭据来自文件。缺失时按报出的键名自动查询可取得的值，外部服务密钥向用户询问，补全文件后重试；其他错误按原始原因处理。
 
 最后报告当前 harness、连接状态、已写入的 `key.env` 路径和未完成项。可以直接说：
 

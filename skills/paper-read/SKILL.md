@@ -27,7 +27,19 @@ LABD 与 ZotMoov `dst_dir` 同值。配置真值在
 （`baseAttachmentPath` / `zotmoov.dst_dir` / `dataDir` / `sync.storage.enabled`），
 脚本每次运行都从这里读，不要在别处写死路径。
 
-Zotero 凭据依次从环境变量、当前 skill 根目录的 `key.env`、`~\.claude.json` 的 Zotero MCP 配置补齐。运行 **zotero-init** 会自动为当前 harness 实际使用的 paper skill 创建或更新 `key.env`，保留其中的 `MINERU_API_KEY`；同步覆盖后可重新运行恢复。
+## 所需 key
+
+凭据存入当前 harness 实际加载的本 skill 的 `scripts\key.env`；脚本优先读取环境变量，再从该文件补齐。各脚本只要求本次操作所需的键。
+
+| 键名 | 用途与获取方式 |
+|---|---|
+| `ZOTERO_API_KEY` | `zotero_link.py` 使用的 Zotero 个人库读写密钥；向用户询问，可在 [Zotero keys](https://www.zotero.org/settings/keys) 创建 |
+| `ZOTERO_LIBRARY_ID` | 个人库 ID；取得 API key 后，自动查询 `GET https://api.zotero.org/keys/<KEY>` 的 `userID` |
+| `MINERU_API_KEY` | `mineru_parse.py` 调用解析服务所需；向用户询问，可在 [MinerU](https://mineru.net/apiManage/token) 获取；读取已有缓存时无需提供 |
+
+脚本缺少配置时会报出缺失键名和 `key.env` 路径，并以非零状态退出。按缺失项补齐：可自动取得的值由 agent 获取，外部服务密钥向用户询问。将结果按键写入 `scripts\key.env`，保留其他配置与注释，再重试原命令；只向用户报告状态和路径。其他错误按原始原因处理。
+
+运行 **zotero-init** 会自动补齐此文件中的 Zotero 凭据，保留 `MINERU_API_KEY`；同步覆盖后可重新运行恢复。
 
 ## ⚠️ 入库的硬约束
 
@@ -109,7 +121,7 @@ ISBN / BibTeX / 网页这类 `zotero_add.py` 不认的情况下才用它，且�
   ~/.${harness}/skills/paper-read/scripts/mineru_parse.py "<PDF 绝对路径>"
 ```
 
-优先读环境变量 `MINERU_API_KEY`，也支持当前 skill 目录中的本机 `key.env`（不随仓库分发，覆盖更新可能清除，推荐环境变量）。调 MinerU Precision API
+使用上述 `MINERU_API_KEY` 调 MinerU Precision API
 （`vlm` 模型，开公式与表格识别），结果解压进 `~/.mineru/<目录名>/`，
 结尾打印该目录绝对路径 —— **用打印出来的路径，不要自己拼**。
 

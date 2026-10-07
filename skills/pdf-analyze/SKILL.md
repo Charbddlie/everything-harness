@@ -15,11 +15,15 @@ When a task requires reading a local PDF, first look for cached MinerU output at
 
 If the cache exists and contains usable extracted Markdown, JSON, or text, read from the cache first. Call MinerU only when the cache is missing, incomplete, stale for the request, or the user explicitly asks to reparse.
 
+## Required key
+
+Store `MINERU_API_KEY` in this skill's `scripts/key.env`, resolved from the skill actually loaded by the current harness. The script reads the environment first, then this file. The key is issued by MinerU; ask the user for it and direct them to [MinerU tokens](https://mineru.net/apiManage/token). Cached output can be read without a key.
+
+When the script exits with a missing-key error, use the reported key names and file path. Automatically generate or retrieve values that can be obtained locally or from existing credentials; ask the user for external service keys. Update the relevant `KEY=value` lines in the UTF-8 file, preserve other settings and comments, then retry the original command. Report only status and paths. Handle other failures according to their original errors.
+
 ## MinerU Parse
 
-Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Use Node.js ≥22.20.0 and curl. Run `node "<skill-dir>/dryrun.mjs"` to check the environment without uploading a PDF or calling MinerU.
-
-The check prints one line: `[pdf-analyze] 通过` on success, or `[pdf-analyze] 失败：<reasons>` with a nonzero exit status when requirements are missing.
+Resolve `<skill-dir>` to the directory containing this `SKILL.md`; do not assume a particular agent's installation path. Use Node.js ≥22.20.0 and curl.
 
 ```bash
 node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf
@@ -27,7 +31,7 @@ node "<skill-dir>/scripts/mineru_parse.mjs" /path/to/file.pdf
 
 The script:
 
-1. Reads `MINERU_API_KEY` only from the environment. If missing or blank, exits with `环境变量缺少MINERU_API_KEY` before contacting MinerU. No key file is read. Reusing existing cached output does not require a key.
+1. Reads `MINERU_API_KEY` from the environment or `scripts/key.env`. If missing or blank, exits with a nonzero status and reports the missing key name and file path before contacting MinerU.
 2. Creates `<pdf parent>/.mineru/<pdf file stem>/`.
 3. Requests MinerU upload URLs through the Precision API.
 4. Uploads the PDF to the pre-signed URL.

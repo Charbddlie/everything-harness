@@ -638,47 +638,6 @@ function fetchText(url) {
   return runCommand(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-fsSL', '--connect-timeout', '20', '--max-time', '120', url]);
 }
 
-export function runDryruns(entries, installed, { log = writeOutput, env = process.env, strict = true } = {}) {
-  const errors = [];
-  for (const entry of entries) {
-    if (entry.source.toLowerCase() !== OWN_SOURCE.toLowerCase()) {
-      log(`[${entry.name}] 跳过：第三方 skill`, { status: '跳过' });
-      continue;
-    }
-    try {
-      const path = installed.get(entry.name)?.path;
-      const script = path && join(path, 'dryrun.mjs');
-      if (!script || !existsSync(script)) {
-        check(path, '尚未安装，无法检查环境');
-        check(!containsScripts(path), '包含脚本但缺少 dryrun.mjs，请更新此 skill');
-        log(`[${entry.name}] 跳过：无检查脚本`, { status: '跳过' });
-        continue;
-      }
-      const result = spawnSync(process.execPath, [script], { cwd: path, env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
-      if (result.error || result.status !== 0) {
-        const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').split(/\r?\n/)
-          .map((line) => line.trim().replace(`[${entry.name}] `, '').replace(/^失败[:：]\s*/, ''))
-          .filter(Boolean).join('；');
-        throw new Error(result.error?.message ?? (detail || `检查脚本退出：${result.signal ?? result.status}`));
-      }
-      log(`[${entry.name}] 通过`, { status: '通过' });
-    } catch (error) {
-      errors.push(entry.name);
-      log(`[${entry.name}] 失败：${error.message.replace(/\r?\n/g, '；')}`, { status: strict ? '失败' : '警告' });
-    }
-  }
-  if (strict) check(!errors.length, `${errors.length} 个 skill 环境检查失败；已安装内容保留，修复后运行 --dryrun。`);
-  else if (errors.length) log(`[警告] ${errors.length} 个 skill 环境检查未通过（${errors.join(', ')}），继续应用内容。`);
-}
-
-export function containsScripts(path) {
-  return readdirSync(path, { withFileTypes: true }).some((entry) => {
-    if (entry.name === 'dryrun.mjs' || entry.name.startsWith('.')) return false;
-    if (entry.isDirectory()) return containsScripts(join(path, entry.name));
-    return entry.isFile() && /\.(mjs|cjs|js|py|sh|ps1|cmd|bat)$/i.test(entry.name);
-  });
-}
-
 export function copySkill(entry, source, target, log = createProgressLogger()) {
   mkdirSync(dirname(target), { recursive: true });
   const temporary = `${target}.${randomUUID()}.tmp`, backup = `${target}.${randomUUID()}.bak`;
@@ -869,21 +828,6 @@ function downloadSources(entries, dependencies, log, tolerateFailure = false) {
   }
 }
 
-export function checkSkills(entries, agents, dependencies, log, apply) {
-  if (!entries.length) return;
-  if (!dependencies.getRepository) {
-    return withRepositories(dependencies, log, (scoped) => {
-      log('下载源码', { stage: true });
-      downloadSources(entries, scoped, log);
-      return checkSkills(entries, agents, scoped, log, apply);
-    });
-  }
-  const prepared = new Map(entries.map((entry) => [entry.name, { path: findSkill(dependencies.getRepository(entry.source), entry) }]));
-  log('检查 skill 环境', { stage: true });
-  (dependencies.runDryruns ?? runDryruns)(entries, prepared, { log, env: dependencies.env, strict: !apply });
-  apply?.(prepared);
-}
-
 function executePlans(plans, options, agents, dependencies, parentLog) {
   if (!skillOperation(options.mode)) return true;
   for (const { rule, entries, passed, error, unmet = [], localOverride = false } of plans) {
@@ -911,8 +855,11 @@ function executePlans(plans, options, agents, dependencies, parentLog) {
       ? prepareInstructionCleanup(names.length ? (dependencies.cleanupTargets ?? cleanupPaths(dependencies)).instructions : [], names)
       : prepareFragments(fragments, agents, dependencies);
     if (options.mode === 'add') {
-      (dependencies.checkSkills ?? checkSkills)(skills, agents, dependencies, log,
-        options.dryrun ? undefined : (prepared) => install(skills, prepared, context));
+      if (skills.length) {
+        log('校验 skill 源码结构', { stage: true });
+        const prepared = new Map(skills.map((entry) => [entry.name, { path: findSkill(dependencies.getRepository(entry.source), entry) }]));
+        if (!options.dryrun) install(skills, prepared, context);
+      }
     } else {
       log('清理 skill 和 sysprompt', { stage: true });
       if (context) remove(skills, context, options.dryrun);
@@ -980,7 +927,7 @@ export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? (options.help || options.mode === 'list' ? writeOutput : createProgressLogger());
   if (options.help) {
-    log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n规则 auto 无额外条件，win 要求 Windows，learn 要求 Windows 和本机显式启用。\n--list 显示清单和本机同步设置；--dryrun 预览并检查，保留正式安装与配置。`);
+    log(`用法：${USAGE}\n清单：远程 harness.json；本机 ~/.everything-harness/harness.json。\n规则 auto 无额外条件，win 要求 Windows，learn 要求 Windows 和本机显式启用。\n--list 显示清单和本机同步设置；--dryrun 预览并校验源码结构，保留正式安装与配置。`);
     return;
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
@@ -1009,7 +956,7 @@ function syncCatalog(options, dependencies, log, catalog) {
   const agents = effectiveAgents(manifest, local);
   const rules = effectiveRules(manifest, local), appliedRules = new Set();
   if (!agents.length) {
-    log('生效 agents 为空，无需安装或检查。', { status: '跳过' });
+    log('生效 agents 为空，无需安装。', { status: '跳过' });
     log('完成', { stage: true });
     reportUnapplied(manifest, rules, appliedRules, dependencies, log);
     return;
@@ -1060,7 +1007,7 @@ function syncCatalog(options, dependencies, log, catalog) {
     throw new Error(`规则检查或同步失败：${failures.join(', ')}；已完成操作保留，请修复后重试。`);
   }
   log('完成', { stage: true });
-  log(dryrun ? '环境检查完成。' : '规则同步和环境检查完成。', { status: '完成' });
+  log(dryrun ? '同步预览完成。' : '规则同步完成。', { status: '完成' });
   reportUnapplied(manifest, rules, appliedRules, dependencies, log);
 }
 
