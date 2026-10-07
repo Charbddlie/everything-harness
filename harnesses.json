@@ -1,0 +1,13 @@
+{
+  "codex": {
+    "skill-dir": ".codex/skills",
+    "agents-md": ".codex/AGENTS.md",
+    "home-env": "CODEX_HOME"
+  },
+  "copilot": {
+    "skill-dir": ".copilot/skills",
+    "agents-md": ".copilot/copilot-instructions.md",
+    "home-env": "COPILOT_HOME",
+    "aliases": ["github-copilot"]
+  }
+}

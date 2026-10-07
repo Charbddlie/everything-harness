@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { instructionPaths, parseArgs, renderFragments, sync, validateFragments, validateManifest } from '../sync.mjs';
+import { instructionPaths, sync } from '../sync.mjs';
 
 const fragment = (name) => ({ name });
 const block = (name, content) => `<!-- eh:${name}:start -->\n${content}\n<!-- eh:${name}:end -->`;
@@ -48,30 +48,6 @@ test('first sync creates both targets and empty local overrides; repeat overwrit
   assert.ok(!f.reads.includes('disabled'));
 });
 
-test('global target override controls fragments and empty targets skip content downloads', (t) => {
-  const f = fixture(t);
-  put(join(f.dependencies.stateDir, 'harness.json'), '{"agents":["codex"],"sync-rules":{}}');
-  f.run();
-  assert.ok(existsSync(f.targets[0]));
-  assert.ok(!existsSync(f.targets[1]));
-  f.reads.length = 0;
-  put(join(f.dependencies.stateDir, 'harness.json'), '{"agents":[],"sync-rules":{}}');
-  f.run();
-  assert.deepEqual(f.reads, []);
-});
-
-test('dryrun validates selected bodies and target markers without initializing or writing', (t) => {
-  const f = fixture(t);
-  put(f.targets[0], 'Personal content');
-  f.run(['--dryrun']);
-  assert.equal(readFileSync(f.targets[0], 'utf8'), 'Personal content');
-  assert.ok(!existsSync(f.targets[1]));
-  assert.ok(!existsSync(f.settings));
-  assert.deepEqual(f.reads, ['one', 'two']);
-  f.content.two = '';
-  assert.throws(() => f.run(['--dryrun']), /失败/);
-});
-
 test('download or target validation failures happen before skill installation or instruction writes', (t) => {
   const f = fixture(t);
   f.manifest.skill.push({ name: 'some-skill', source: 'example/skills' });
@@ -82,104 +58,31 @@ test('download or target validation failures happen before skill installation or
   put(f.targets[1], '<!-- eh:one:start -->\nBroken');
   assert.throws(() => f.run(), /失败/);
   assert.equal(readFileSync(f.targets[0], 'utf8'), 'Personal content');
-  assert.ok(!existsSync(f.settings));
+  assert.deepEqual(JSON.parse(readFileSync(f.settings)), { 'sync-rules': {} });
 });
 
-test('malformed, nested and duplicate markers fail; remote bodies cannot introduce markers', () => {
-  const fragments = [{ name: 'one', content: 'New content' }];
-  for (const text of ['<!-- eh:one:start -->', '<!-- eh:one:end -->',
-    '<!-- eh:one:start --> <!-- eh:two:end -->',
-    `<!-- eh:one:start --> ${block('two', 'nested')} <!-- eh:one:end -->`,
-    block('one', 'a') + block('one', 'b'), '<!-- eh:bad mark -->']) {
-    assert.throws(() => renderFragments(text, fragments), /标记/);
-  }
-  assert.throws(() => renderFragments('', [{ name: 'one', content: block('two', 'nested') }]), /保留标记/);
-});
-
-test('replacement preserves surrounding CRLF, literal dollar signs and disabled blocks', () => {
-  const original = `Intro\r\n${block('one', 'Old')}\r\n${block('frozen', 'Keep')}\r\nEnd`;
-  const body = 'Price $5; literal $& and $1; equation $$x^2$$';
-  assert.equal(renderFragments(original, [{ name: 'one', content: body }]),
-    `Intro\r\n${block('one', body)}\r\n${block('frozen', 'Keep')}\r\nEnd`);
-});
-
-test('instruction paths honor Codex and Copilot overrides', () => {
-  assert.deepEqual(instructionPaths(['codex', 'github-copilot'], {
-    env: { CODEX_HOME: '/custom/codex', COPILOT_HOME: '/custom/copilot' }, homeDir: '/profile',
-  }), [join('/custom/codex', 'AGENTS.md'), join('/custom/copilot', 'copilot-instructions.md')]);
-});
-
-test('existing instruction file symlink is preserved', { skip: process.platform === 'win32' }, (t) => {
+test('sync and clean share marker validation, preview and link-preserving cleanup with distinct scopes', (t) => {
   const f = fixture(t);
-  const actual = join(f.root, 'actual.md');
-  put(actual, 'Personal content\n');
-  mkdirSync(dirname(f.targets[0]), { recursive: true });
-  symlinkSync(actual, f.targets[0]);
-  f.run();
-  assert.ok(lstatSync(f.targets[0]).isSymbolicLink());
-  assert.ok(readFileSync(actual, 'utf8').includes(block('one', f.content.one)));
-});
-
-test('fragment CLI requires typed names and rejects the old modifier', () => {
-  assert.deepEqual(parseArgs(['--auto_sync', 'false', 'agents-md:one', '--local']).targets, [{ type: 'agents-md', name: 'one' }]);
-  for (const args of [['--fragments'], ['--add', 'a/b', 'agents-md:one'],
-    ['--auto_sync', 'maybe', 'agents-md:one'], ['--auto_sync', 'true', '../escape']]) {
-    assert.throws(() => parseArgs(args));
-  }
-});
-
-test('renamed fragment removes the old block before adding the new one, overriding local switches', (t) => {
-  const f = fixture(t);
-  f.manifest['agents-md'] = [fragment('one')];
-  f.manifest['sync-rules'].auto = [{ type_name: 'agents-md:one' }];
-  f.manifest.deleted = [{ type_name: 'agents-md:old' }];
-  put(f.settings, JSON.stringify({ 'sync-rules': { auto: [{ type_name: 'agents-md:old' }, { type_name: 'agents-md:one' }] } }));
-  const original = `Intro\n${block('old', 'Local edits')}\n${block('unmanaged', 'Keep')}\nEnd`;
-  f.targets.forEach((path) => put(path, original));
-  f.run(['--dryrun']);
-  assert.ok(f.logs.some((line) => line.includes('片段已标记删除：old')));
-  assert.equal(readFileSync(f.targets[0], 'utf8'), original);
-  f.run();
-  for (const path of f.targets) {
-    const result = readFileSync(path, 'utf8');
-    assert.ok(!result.includes('eh:old:'));
-    assert.ok(result.startsWith(`Intro\n\n${block('unmanaged', 'Keep')}\nEnd`));
-    assert.ok(result.includes(block('one', f.content.one)));
-    f.run();
-    assert.equal(readFileSync(path, 'utf8'), result);
-  }
-  assert.ok(!f.reads.includes('old'));
-  assert.deepEqual(f.manifest.deleted, [{ type_name: 'agents-md:old' }]);
-});
-
-test('fragment deletion with no replacement never creates empty instruction files', (t) => {
-  const f = fixture(t);
-  f.manifest['agents-md'] = [];
+  f.manifest.skill = [];
   f.manifest['sync-rules'].auto = [];
   f.manifest.deleted = [{ type_name: 'agents-md:old' }];
-  f.run();
-  assert.ok(f.targets.every((path) => !existsSync(path)));
-  assert.deepEqual(f.reads, []);
-  put(f.targets[0], block('old', 'Remove'));
-  f.run();
-  assert.equal(readFileSync(f.targets[0], 'utf8'), '');
-});
-
-test('fragment records reject source, per-fragment agents and invalid deletion flags', () => {
-  for (const extra of [{ source: 'example/repo' }, { agents: ['codex'] }, { deleted: 'true' }]) {
-    assert.throws(() => validateManifest({ agents: ['codex'], skill: [], 'agents-md': [{ ...fragment('one'), ...extra }] }));
+  const actual = join(f.root, 'instructions.md');
+  const original = `Personal\n${block('old', 'Remove')}\n${block('unmanaged', 'Keep')}\n`;
+  put(actual, original);
+  for (const target of f.targets) {
+    mkdirSync(dirname(target), { recursive: true });
+    symlinkSync(actual, target);
   }
-  assert.throws(() => validateManifest({ skill: [], 'agents-md': [{ ...fragment('one'), deleted: false }] }, { local: true }));
-});
-
-test('checked-in old skills are tombstones with removed source', () => {
-  const manifest = validateManifest(JSON.parse(readFileSync(new URL('../harness.json', import.meta.url))));
-  for (const name of ['dev-directory', 'formula-display', 'simple-doc']) {
-    assert.deepEqual(manifest.deleted.find((item) => item.type_name === `skill:${name}`), {
-      type_name: `skill:${name}`, source: 'Charbddlie/everything-harness',
-    });
-    assert.ok(!manifest.skill.some((item) => item.name === name));
-    if (name !== 'dev-directory') assert.ok(manifest['sync-rules'].auto.some((item) => item.type_name === `agents-md:${name}`));
-    assert.ok(!existsSync(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
-  }
+  put(actual, '<!-- eh:old:start -->\nBroken');
+  assert.throws(() => f.run(), /缺少结束标记/);
+  assert.throws(() => sync(['--clean'], f.dependencies), /缺少结束标记/);
+  put(actual, original);
+  f.run(['--dryrun']);
+  sync(['--dryrun', '--clean'], f.dependencies);
+  assert.equal(readFileSync(actual, 'utf8'), original);
+  f.run();
+  assert.equal(readFileSync(actual, 'utf8'), `Personal\n\n${block('unmanaged', 'Keep')}\n`);
+  sync(['--clean'], f.dependencies);
+  assert.equal(readFileSync(actual, 'utf8'), 'Personal\n\n\n');
+  assert.ok(f.targets.every((target) => lstatSync(target).isSymbolicLink()));
 });

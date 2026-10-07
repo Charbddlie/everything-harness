@@ -1,7 +1,7 @@
 {
   "agents": [
     "codex",
-    "github-copilot"
+    "copilot"
   ],
   "skill": [
     {

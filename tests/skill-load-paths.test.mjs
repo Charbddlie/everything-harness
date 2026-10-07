@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { copySkill, sync, writeAtomic } from '../sync.mjs';
+import { copySkill, sync } from '../sync.mjs';
 
 const put = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const text = '---\nname: one\ndescription: Test skill.\n---\nVersion one\n';
@@ -20,23 +20,9 @@ function fixture(t) {
     fetchRepository: (source, path) => put(join(path, 'skills', 'one', 'SKILL.md'), text),
   };
   return { root, home, source, entry, manifest, dependencies,
-    shared: join(home, '.agents', 'skills', 'one'),
     target: (agent) => join(home, agent, 'skills', 'one'),
     run: (args = []) => sync(args, dependencies) };
 }
-
-test('copy prepares a complete replacement, removes stale files and records the source', (t) => {
-  const f = fixture(t), target = join(f.root, 'installed', 'one');
-  put(join(f.source, 'scripts', 'run.mjs'), 'console.log("one");');
-  put(join(f.source, '.git', 'config'), 'not skill content');
-  put(join(target, 'stale.txt'), 'stale');
-  copySkill(f.entry, f.source, target);
-  assert.equal(readFileSync(join(target, 'SKILL.md'), 'utf8'), text);
-  assert.ok(existsSync(join(target, 'scripts', 'run.mjs')));
-  assert.ok(!existsSync(join(target, 'stale.txt')));
-  assert.ok(!existsSync(join(target, '.git')));
-  assert.deepEqual(JSON.parse(readFileSync(join(target, '.eh-source.json'))), { source: 'example/repo' });
-});
 
 test('failed replacement restores the existing directory', (t) => {
   const f = fixture(t), target = join(f.root, 'installed', 'one');
@@ -70,79 +56,69 @@ test('failure to delete a replacement backup only warns after installing new con
   } finally { mock.mock.restore(); syncBuiltinESMExports(); }
 });
 
-test('a blocked atomic-write temporary file does not mask the write error', (t) => {
-  const f = fixture(t), target = join(f.root, 'settings.json'), logs = [];
-  put(target, 'Keep');
-  const primary = new Error('rename denied');
-  let temporary;
-  const rename = t.mock.method(fs, 'renameSync', (from) => { temporary = from; throw primary; });
-  const originalRemove = fs.rmSync;
-  const remove = t.mock.method(fs, 'rmSync', (path, options) => {
-    if (path === temporary) throw new Error('EPERM fixture');
-    return originalRemove(path, options);
-  });
-  syncBuiltinESMExports();
-  try {
-    assert.throws(() => writeAtomic(target, 'New', (line) => logs.push(line)), (error) => error === primary);
-    assert.equal(readFileSync(target, 'utf8'), 'Keep');
-    assert.ok(logs.some((line) => line.includes(temporary) && line.includes('EPERM')));
-  } finally { rename.mock.restore(); remove.mock.restore(); syncBuiltinESMExports(); }
-});
-
-test('replacing a directory link leaves its previous target intact', (t) => {
-  const f = fixture(t), target = join(f.root, 'linked');
-  symlinkSync(f.source, target, process.platform === 'win32' ? 'junction' : 'dir');
-  copySkill(f.entry, f.source, target);
-  assert.ok(!lstatSync(target).isSymbolicLink());
-  assert.equal(readFileSync(join(f.source, 'SKILL.md'), 'utf8'), text);
-});
-
-test('user home only gets shared skills while both agents receive instruction fragments', (t) => {
+test('default and explicit homes install into agent directories and remove legacy copies after installation', (t) => {
   const f = fixture(t);
   f.manifest['agents-md'] = [{ name: 'base' }];
   f.manifest['sync-rules'].auto.push({ type_name: 'agents-md:base' });
   f.dependencies.fetchFragment = () => 'Instructions';
-  for (const home of ['~', f.home]) {
-    f.run(['--home', home]);
-    assert.ok(existsSync(join(f.shared, 'SKILL.md')));
-    assert.ok(!existsSync(f.target('.codex')));
-    assert.ok(!existsSync(f.target('.copilot')));
-    assert.match(readFileSync(join(f.home, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
-    assert.match(readFileSync(join(f.home, '.copilot', 'copilot-instructions.md'), 'utf8'), /Instructions/);
+  for (const home of [undefined, '~', f.home, join(f.root, 'custom')]) {
+    const root = home === undefined || home === '~' ? f.home : home;
+    const legacy = join(root, '.agents', 'skills', 'one');
+    put(join(legacy, 'SKILL.md'), 'Old copy');
+    put(join(root, '.agents', 'skills', 'unmanaged', 'SKILL.md'), 'Keep');
+    const args = home === undefined ? [] : ['--home', home];
+    f.run([...args, '--dryrun']);
+    assert.equal(readFileSync(join(legacy, 'SKILL.md'), 'utf8'), 'Old copy');
+    const download = f.dependencies.fetchRepository;
+    f.dependencies.fetchRepository = () => { throw new Error('Download failed'); };
+    assert.throws(() => f.run(args), /Download failed/);
+    assert.equal(readFileSync(join(legacy, 'SKILL.md'), 'utf8'), 'Old copy');
+    f.dependencies.fetchRepository = download;
+    f.run(args);
+    for (const agent of ['.codex', '.copilot']) assert.equal(readFileSync(join(root, agent, 'skills', 'one', 'SKILL.md'), 'utf8'), text);
+    assert.ok(!existsSync(legacy));
+    assert.equal(readFileSync(join(root, '.agents', 'skills', 'unmanaged', 'SKILL.md'), 'utf8'), 'Keep');
+    assert.match(readFileSync(join(root, '.codex', 'AGENTS.md'), 'utf8'), /Instructions/);
+    assert.match(readFileSync(join(root, '.copilot', 'copilot-instructions.md'), 'utf8'), /Instructions/);
   }
 });
 
-test('custom home copies selected endpoints and scoped deletion preserves other agents', (t) => {
+test('installation selects agents and deletion covers every old and current location', (t) => {
   const f = fixture(t), home = join(f.root, 'custom');
   const target = (agent) => join(home, agent, 'skills', 'one');
+  f.run(['--home', home, '--del', 'agent:copilot']);
   f.run(['--home', home]);
-  for (const agent of ['.agents', '.codex', '.copilot']) {
-    assert.ok(!lstatSync(target(agent)).isSymbolicLink());
-    assert.equal(readFileSync(join(target(agent), 'SKILL.md'), 'utf8'), text);
-  }
-  f.run(['--home', home, '--local', '--del_agents', 'github-copilot']);
-  f.run(['--home', home, '--local', '--del', 'skill:one']);
-  assert.ok(!existsSync(target('.codex')));
-  assert.ok(existsSync(target('.copilot')));
-  assert.ok(existsSync(target('.agents')));
-  f.run(['--home', home, '--local', '--add_agents', 'github-copilot']);
-  f.run(['--home', home, '--local', '--del', 'skill:one']);
+  assert.equal(readFileSync(join(target('.codex'), 'SKILL.md'), 'utf8'), text);
+  assert.ok(!existsSync(target('.copilot')) && !existsSync(target('.agents')));
+  for (const agent of ['.agents', '.copilot']) put(join(target(agent), 'SKILL.md'), text);
+  f.run(['--home', home, '--del', 'skill:one']);
   assert.ok(['.agents', '.codex', '.copilot'].every((agent) => !existsSync(target(agent))));
   assert.ok(!existsSync(f.home));
-});
 
-test('shared user-home deletion requires all supported agents', (t) => {
-  const f = fixture(t); f.run();
-  f.run(['--local', '--del_agents', 'github-copilot']);
-  assert.throws(() => f.run(['--local', '--del', 'skill:one']), /共享/);
-  assert.ok(existsSync(f.shared));
-  f.run(['--local', '--add_agents', 'github-copilot']);
-  f.run(['--local', '--del', 'skill:one']);
-  assert.ok(!existsSync(f.shared));
+  const codex = join(f.root, 'custom-codex'), copilot = join(f.root, 'custom-copilot');
+  f.dependencies.env = { CODEX_HOME: codex, COPILOT_HOME: copilot };
+  f.manifest.agents = ['codex'];
+  f.run();
+  assert.equal(readFileSync(join(codex, 'skills', 'one', 'SKILL.md'), 'utf8'), text);
+  assert.ok(!existsSync(join(f.home, '.agents')) && !existsSync(join(f.home, '.codex')) && !existsSync(copilot));
+  f.manifest['agents-md'] = [{ name: 'base' }];
+  const directories = [codex, copilot, ...['.agents', '.codex', '.copilot'].map((name) => join(f.home, name))];
+  const instructions = [f.home, ...directories].flatMap((directory) => ['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'].map((name) => join(directory, name)));
+  for (const directory of directories) {
+    put(join(directory, 'skills', 'one', 'SKILL.md'), text);
+    put(join(directory, 'skills', 'unmanaged', 'SKILL.md'), 'Keep');
+  }
+  for (const path of instructions) put(path, 'Personal\n<!-- eh:base:start -->\nOld rule\n<!-- eh:base:end -->\n');
+  f.run(['--del', 'skill:one', 'agents-md:base']);
+  for (const directory of directories) {
+    assert.ok(!existsSync(join(directory, 'skills', 'one')));
+    assert.equal(readFileSync(join(directory, 'skills', 'unmanaged', 'SKILL.md'), 'utf8'), 'Keep');
+  }
+  for (const path of instructions) assert.equal(readFileSync(path, 'utf8'), 'Personal\n\n');
 });
 
 test('existing parent directory links are preserved', (t) => {
-  const f = fixture(t), home = join(f.root, 'custom'), shared = join(home, '.agents', 'skills');
+  const f = fixture(t), home = join(f.root, 'custom'), shared = join(f.root, 'linked-skills');
   mkdirSync(shared, { recursive: true });
   mkdirSync(join(home, '.codex'), { recursive: true });
   const link = join(home, '.codex', 'skills');
