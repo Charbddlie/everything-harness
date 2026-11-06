@@ -13,6 +13,10 @@
       "source": "Charbddlie/everything-harness"
     },
     {
+      "name": "llmproxy",
+      "source": "Charbddlie/everything-harness"
+    },
+    {
       "name": "paper-add",
       "source": "Charbddlie/everything-harness"
     },
@@ -36,6 +40,7 @@
     "auto": [
       { "type_name": "skill:copilot-api" },
       { "type_name": "skill:harness-manage" },
+      { "type_name": "skill:llmproxy" },
       { "type_name": "agents-md:formula-display" },
       { "type_name": "agents-md:simple-dev" },
       { "type_name": "agents-md:simple-doc" },
