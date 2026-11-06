@@ -38,7 +38,6 @@
   ],
   "sync-rules": {
     "auto": [
-      { "type_name": "skill:copilot-api" },
       { "type_name": "skill:harness-manage" },
       { "type_name": "skill:llmproxy" },
       { "type_name": "agents-md:formula-display" },
