@@ -25,7 +25,7 @@ API 环境（Linux / macOS / WSL）：设置 `export LLMPROXY_BASE_URL="你的Ba
 ```toml
 model = "copilot-gpt-6-astra"
 model_provider = "llmproxy"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 
 [model_providers.llmproxy]
 name = "llmproxy"
@@ -38,11 +38,15 @@ wire_api = "responses"
 
 将示例中的 `model` 替换为用户确认的完整模型名。独立的 `llmproxy` provider 是此网关长会话配置的必要条件。yifan 已验证独立 provider 方案在自动压缩上下文后继续执行；本次接入仍需单独验证。
 
-换模型时仅修改对应的 `model`，保留 provider，并新建会话。可选择主文列出的 `copilot-` 模型、Substrate 模型或 Azure `gpt-6.1-terra`；这些新增 Codex 路由的接入说明优先于最初仅使用 `copilot-` 前缀的建议。
+换模型时修改对应的 `model`，保留 provider，按下节补齐完整模型名的元数据，并新建会话。可选择主文列出的 `copilot-` 模型、Substrate 模型或 Azure `gpt-6.1-terra`；这些新增 Codex 路由的接入说明优先于最初仅使用 `copilot-` 前缀的建议。
 
 配置完成后，在项目目录运行 `codex`，或重新打开 VS Code Codex 插件并新建会话。验证时使用最小请求，报告配置结果与调用结果；未做长会话测试时仅报告已验证范围。
 
 自定义 provider 字段参考 [Codex 官方配置文档](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)；网关地址、模型兼容性及压缩测试结论来自 yifan 的接入说明。
+
+### Codex 模型元数据
+
+从当前 Codex 的内置模型目录或 `models_cache.json` 中，按去掉网关前缀后的基础型号查找并复制完整条目，将 `slug` 改为选定的完整路由名，按主文规则应用默认值。合并到用户配置目录下的 `llmproxy-models.json`，保留已有条目，在生效配置中设置 `model_catalog_json` 为其绝对路径。重启客户端并新建会话，确认元数据告警消失。
 
 ## GitHub Copilot CLI
 
