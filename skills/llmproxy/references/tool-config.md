@@ -2,7 +2,7 @@
 
 ## 模型选择
 
-Codex、Copilot CLI 和 VS Code Copilot Chat 的默认型号均为 `copilot-gpt-6-astra`，统一使用 Responses API。先查询网关的最新 GPT 候选，列出默认型号与可选版本并询问用户；用户已经指定型号或接受默认时直接执行。
+Codex、Copilot CLI 和 VS Code Copilot Chat 的默认型号均为 `substrate-gpt-6-astra`，统一使用 Responses API。先查询网关的最新 GPT 候选，列出默认型号与可选版本并询问用户；用户已经指定型号或接受默认时直接执行。
 
 配置前检查工具版本及接口支持；版本缺少下述 Responses 配置入口时，说明需要兼容版本并询问后续处理，保留用户选定型号。
 
@@ -23,7 +23,7 @@ API 环境（Linux / macOS / WSL）：设置 `export LLMPROXY_BASE_URL="你的Ba
 读取已有文件，原位合并同名项并保留其他配置。前三项位于 TOML 顶层、各个配置段之前；若用户使用 profile，检查实际生效的模型及 provider。
 
 ```toml
-model = "copilot-gpt-6-astra"
+model = "substrate-gpt-6-astra"
 model_provider = "llmproxy"
 model_reasoning_effort = "medium"
 
@@ -65,7 +65,7 @@ wire_api = "responses"
   ],
   "models": [
     {
-      "id": "copilot-gpt-6-astra",
+      "id": "substrate-gpt-6-astra",
       "provider": "llmproxy"
     }
   ]
@@ -78,14 +78,14 @@ wire_api = "responses"
 
 ```json
 {
-  "model": "llmproxy/copilot-gpt-6-astra"
+  "model": "llmproxy/substrate-gpt-6-astra"
 }
 ```
 
-这里的 `llmproxy/` 是 CLI 选择 provider 的限定前缀，实际发给网关的模型名仍为 `copilot-gpt-6-astra`。重启 CLI 后运行：
+这里的 `llmproxy/` 是 CLI 选择 provider 的限定前缀，实际发给网关的模型名仍为 `substrate-gpt-6-astra`。重启 CLI 后运行：
 
 ```sh
-copilot --model llmproxy/copilot-gpt-6-astra
+copilot --model llmproxy/substrate-gpt-6-astra
 ```
 
 会话内用 `/model` 检查所选模型，或用 `/model --global` 设置全局默认。核对命令行、`COPILOT_MODEL` 和项目设置是否覆盖用户默认。以最小请求验证；运行时凭据来自 `providers.json`。
@@ -103,8 +103,8 @@ copilot --model llmproxy/copilot-gpt-6-astra
     "apiType": "responses",
     "models": [
       {
-        "id": "copilot-gpt-6-astra",
-        "name": "copilot-gpt-6-astra (llmproxy)",
+        "id": "substrate-gpt-6-astra",
+        "name": "substrate-gpt-6-astra (llmproxy)",
         "url": "你的BaseURL/responses",
         "toolCalling": true
       }
@@ -115,4 +115,4 @@ copilot --model llmproxy/copilot-gpt-6-astra
 
 `apiKey` 引用 VS Code 保存的凭据；保留界面生成的实际引用，并在其凭据输入界面保存本机 Key。按模型及网关确认 token 限制、视觉能力和会话状态支持，补充本机设置定义要求的字段。若网关采用无状态 Responses，在模型项设置 `statefulResponses: false` 以发送完整历史。
 
-保存后在 Chat 模型选择器选择 `copilot-gpt-6-astra (llmproxy)`，新建会话做最小请求验证。此接入方式依据官方文档，网关与本机插件的联调结果以实测为准。
+保存后在 Chat 模型选择器选择 `substrate-gpt-6-astra (llmproxy)`，新建会话做最小请求验证。此接入方式依据官方文档，网关与本机插件的联调结果以实测为准。

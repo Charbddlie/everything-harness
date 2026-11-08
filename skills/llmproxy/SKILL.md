@@ -25,9 +25,9 @@ description: 使用 yifan 提供的 llmproxy 大模型 API，查询模型、调�
 
 默认使用 Responses API。GPT-6 / GPT-6.1 系列仅支持 Responses；Chat 接口已由 yifan 测试的 Copilot 模型为 `copilot-gpt-5.3-codex`、`copilot-gemini-4-argon`、`copilot-gemini-3.8-flash`。其他模型的 Chat 支持需另行确认，`/models` 中出现模型只代表被列出。
 
-所有 harness 的默认配置统一使用 `copilot-gpt-6-astra` 和 Responses API。配置前查询 `/models`，结合提供方说明确认版本与接口支持，列出默认型号及最新 GPT 候选的完整模型名，询问用户要配置哪个版本，确认后写入。用户明确型号或接受默认时直接采用；无法查询时说明可用性尚未确认，并依据已知型号询问选择。
+所有 harness 的默认配置统一使用 `substrate-gpt-6-astra` 和 Responses API。配置前查询 `/models`，结合提供方说明确认版本与接口支持，列出默认型号及最新 GPT 候选的完整模型名，询问用户要配置哪个版本，确认后写入。用户明确型号或接受默认时直接采用；无法查询时说明可用性尚未确认，并依据已知型号询问选择。
 
-用户也可选择 Substrate、其他 Copilot 或 Azure GPT 模型。yifan 补充 Azure `gpt-6.1-terra` 部署于 wus3、额度较大且速度快；容量和延迟以实际调用为准。Azure `gpt-6-astra` 返回 429 时，可向用户建议 `substrate-gpt-6-astra`，保留用户明确指定的模型选择。
+用户也可选择其他 Substrate、Copilot 或 Azure GPT 模型。yifan 补充 Azure `gpt-6.1-terra` 部署于 wus3、额度较大且速度快；容量和延迟以实际调用为准。Azure `gpt-6-astra` 返回 429 时，可向用户建议 `substrate-gpt-6-astra`，保留用户明确指定的模型选择。
 
 所有型号均按去掉网关前缀后的基础型号复用元数据；无前缀、`copilot-`、`substrate-` 下基础型号相同的模型共用一份，实际请求保留完整路由名。初始化和换模型时从客户端已有目录复制对应条目。GPT-6 默认使用 **1M（1,000,000 tokens）上下文、medium reasoning effort**，其他型号沿用原元数据；用户明确指定的参数优先。
 
@@ -49,7 +49,7 @@ client = OpenAI(
 # print([model.id for model in client.models.list()])
 
 r = client.responses.create(
-    model="copilot-gpt-6-astra",
+    model="substrate-gpt-6-astra",
     input="你好",
 )
 print(r.output_text)
