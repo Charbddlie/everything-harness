@@ -25,6 +25,10 @@
       "source": "Charbddlie/everything-harness"
     },
     {
+      "name": "server-perpare",
+      "source": "Charbddlie/everything-harness"
+    },
+    {
       "name": "zotero-init",
       "source": "Charbddlie/everything-harness"
     }
@@ -34,16 +38,19 @@
     { "name": "formula-display" },
     { "name": "simple-dev" },
     { "name": "simple-doc" },
-    { "name": "instruction" }
+    { "name": "instruction" },
+    { "name": "server-perpare" }
   ],
   "sync-rules": {
     "auto": [
       { "type_name": "skill:harness-manage" },
       { "type_name": "skill:llmproxy" },
+      { "type_name": "skill:server-perpare" },
       { "type_name": "agents-md:formula-display" },
       { "type_name": "agents-md:simple-dev" },
       { "type_name": "agents-md:simple-doc" },
-      { "type_name": "agents-md:instruction" }
+      { "type_name": "agents-md:instruction" },
+      { "type_name": "agents-md:server-perpare" }
     ],
     "win": [
       { "type_name": "agents-md:win-dev" }
