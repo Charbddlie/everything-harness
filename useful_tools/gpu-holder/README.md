@@ -6,12 +6,15 @@
 
 ## 配置与运行
 
-在仓库根目录准备本机配置：
+在 eh 仓库根目录安装，再准备本机配置：
 
 ```bash
-cd useful_tools/gpu-holder
+node sync.mjs --add tool:gpu-holder
+cd ~/gpu-holder/useful_tools/gpu-holder
 cp config.example.json config.json
 ```
+
+安装时可通过 `--home <安装父目录>` 自定义位置。更新执行 `git -C ~/gpu-holder pull`。
 
 在 `config.json` 中填写可直接 SSH 的主机名或 SSH 别名；该文件由 Git 忽略：
 

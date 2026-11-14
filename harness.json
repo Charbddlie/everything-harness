@@ -69,5 +69,17 @@
     { "type_name": "skill:skill-manage", "source": "Charbddlie/everything-harness" },
     { "type_name": "agents-md:dev-directory" },
     { "type_name": "agents-md:win-dir" }
+  ],
+  "tool": [
+    {
+      "name": "codex-auto-approve",
+      "source": "Charbddlie/everything-harness",
+      "path": "useful_tools/codex-auto-approve"
+    },
+    {
+      "name": "gpu-holder",
+      "source": "Charbddlie/everything-harness",
+      "path": "useful_tools/gpu-holder"
+    }
   ]
 }

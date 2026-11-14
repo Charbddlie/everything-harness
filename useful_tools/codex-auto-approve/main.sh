@@ -47,14 +47,14 @@ case $1 in
     else
       tmux new-session -d -s "$watcher" bash "$self" watch
       tmux set-option -t "$watcher" destroy-unattached off
-      echo '自动审批：开启（每 3 秒扫描，审批后连续检查）'
+      echo '确认助手：开启（每 3 秒检查确认框，确认后连续检查）'
     fi
     ;;
   off)
     if tmux has-session -t "=$watcher" 2>/dev/null; then
       tmux kill-session -t "=$watcher"
     fi
-    echo '自动审批：关闭'
+    echo '确认助手：关闭'
     ;;
   watch)
     interval=3

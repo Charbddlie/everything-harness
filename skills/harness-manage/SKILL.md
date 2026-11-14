@@ -62,7 +62,9 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 | 参数 | 行为 |
 | --- | --- |
 | 无参数 | 按清单顺序执行同步规则 |
-| `--list` | 显示远程内容、本机覆盖、agents 和删除项 |
+| `--list` | 显示远程内容、本机覆盖、agents、tools 和删除项 |
+| `--list tools` | 列出可单独安装的工具 |
+| `--add tool:NAME` | 稀疏 clone 工具到 `<home>/<NAME>`，默认 `~/<NAME>` |
 | `--dryrun` | 下载、校验源码结构并预览操作，保留正式安装、片段和配置 |
 | `--clean` | 清理本机项目内容及整个 `.everything-harness` 配置目录；可加 `--dryrun` 预览 |
 | `--add skill:NAME` | 将清单中的 skill 加入本机同步范围并同步 |
@@ -74,6 +76,18 @@ cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everythin
 | `--del agent:NAME` | 停用 harness，清理该目标中的项目内容 |
 
 `--add`、`--del` 接收一个或多个 `type:name`，可混合内容、规则和 agent。所有模式支持 `--home`。Skill 来源直接读取清单，成员仍受所属规则条件约束。删除内容、规则或 agent 时保留其他同步目标仍需要的内容。
+
+## 独立工具
+
+`useful_tools/` 存放简单实用工具，在 `harness.json` 的 `tool` 中登记 `name`、`source`（GitHub owner/repo）和 `path`（仓库内相对目录）。工具通过独立命令显式安装：
+
+```bash
+node sync.mjs --list tools
+node sync.mjs --add tool:codex-auto-approve tool:gpu-holder
+node sync.mjs --add tool:gpu-holder --home ~/tools
+```
+
+每个工具安装目录是独立的稀疏 Git checkout，程序在该目录内的清单 `path` 下，后续执行 `git pull` 更新。本机配置与状态文件由工具的 Git 忽略规则保留。安装后按工具 README 配置和启用。重复安装保留现有目录；工具安装与 skill、规则、agent 操作分别执行。默认同步及 `--clean` 处理 skills 和指令，工具按独立仓库手动维护。
 
 ## 路径与覆盖
 

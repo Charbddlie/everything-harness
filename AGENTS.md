@@ -2,7 +2,7 @@
 
 ## 开发范围
 
-- `useful_tools/` 存放实用、简单的独立工具，需要手动安装或运行；`sync.mjs` 不自动安装该目录中的工具。
+- `useful_tools/` 存放实用、简单的独立工具，在 `harness.json` 的 `tool` 中登记名称、来源和路径。通过 `--add tool:<name>` 显式安装为独立稀疏 Git checkout，默认同步只处理 skills 和规则。
 
 - `eh` 指本项目。Skill 源码放在 `skills/<name>/SKILL.md`，常驻规则放在 `agents-md/<name>.md`；本文件只用于仓库开发。
 - 内容、来源和规则在 `harness.json` 中维护，删除项长期保留在 `deleted`；harness 路径统一在 `harnesses.json` 中定义并按名称读取。

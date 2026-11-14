@@ -11,10 +11,13 @@ const USAGE = `node sync.mjs [--dryrun | --list]
 node sync.mjs --clean [--dryrun]
 node sync.mjs --add <type>:<name> ...
 node sync.mjs --del <type>:<name> ...
-type: skill | agents-md | rule | agent
+node sync.mjs --list tools
+node sync.mjs --add tool:<name> ... [--home <安装父目录>]
+type: skill | agents-md | rule | agent | tool
 所有模式支持 --home <目录>，默认用户主目录（~）。
 --clean 清理本机项目内容及 .everything-harness 配置目录，始终处理用户主目录，--home 增加清理目标；--clean --dryrun 预览清理。
 --add 启用本机同步并立即同步；--del 停止本机同步并清理对应安装。
+tool 单独安装到 <home>/<name>，默认 ~/<name>；在安装目录执行 git pull 更新。
 agent:codex、agent:copilot 选择同步目标；内容和规则由远程 harness.json 定义。`;
 
 function check(condition, message) { if (!condition) throw new Error(message); }
@@ -69,13 +72,13 @@ export function createProgressLogger(write = writeOutput) {
 }
 
 function skillName(name) {
-  check(typeof name === 'string' && name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name), `无效 skill 名：${name}`);
+  check(typeof name === 'string' && name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name), `无效名称：${name}`);
 }
 
-export function typedName(value, { rule = false, agent = false } = {}) {
-  check(typeof value === 'string' && /^(skill|agents-md|rule|agent):[^:]+$/.test(value), `无效名称：${value}；请使用 type:name。`);
+export function typedName(value, { rule = false, agent = false, tool = false } = {}) {
+  check(typeof value === 'string' && /^(skill|agents-md|rule|agent|tool):[^:]+$/.test(value), `无效名称：${value}；请使用 type:name。`);
   const [type, name] = value.split(':');
-  check((type !== 'rule' || rule) && (type !== 'agent' || agent), '规则成员和删除记录只能使用 skill: 或 agents-md: 前缀。');
+  check((type !== 'rule' || rule) && (type !== 'agent' || agent) && (type !== 'tool' || tool), '规则成员和删除记录只能使用 skill: 或 agents-md: 前缀。');
   skillName(name);
   return { type, name };
 }
@@ -153,6 +156,7 @@ export function parseArgs(args) {
     }
     if (['--add', '--del', '--list', '--dryrun'].includes(arg) && options.mode === 'sync') {
       options.mode = arg.slice(2);
+      if (arg === '--list' && args[i + 1] === 'tools') { options.listTools = true; i++; }
       if (skillOperation(options.mode)) {
         while (i + 1 < args.length && !args[i + 1].startsWith('-')) values.push(args[++i]);
       }
@@ -160,20 +164,26 @@ export function parseArgs(args) {
   }
   if (skillOperation(options.mode)) {
     check(values.length > 0, `--${options.mode} 需要明确的 type:name。`);
-    options.targets = values.map((value) => typedName(value, { rule: true, agent: true }));
+    options.targets = values.map((value) => typedName(value, { rule: true, agent: true, tool: true }));
     check(new Set(options.targets.map(({ type, name }) => `${type}:${name}`)).size === values.length, '重复 type:name');
     options.names = values;
   }
   return options;
 }
 
-export function homeDependencies(home, dependencies = {}) {
-  if (home === undefined) return dependencies;
-  const baseEnv = dependencies.env ?? process.env;
+function resolveHome(home, dependencies) {
   const originalHome = dependencies.homeDir ?? homedir();
+  home ??= originalHome;
   const expanded = home === '~' ? originalHome : /^~[/\\]/.test(home) ? join(originalHome, home.slice(2)) : home;
   const homeDir = resolve(dependencies.cwd ?? process.cwd(), expanded);
   check(!existsSync(homeDir) || statSync(homeDir).isDirectory(), `--home 必须是目录：${homeDir}`);
+  return homeDir;
+}
+
+export function homeDependencies(home, dependencies = {}) {
+  if (home === undefined) return dependencies;
+  const baseEnv = dependencies.env ?? process.env;
+  const homeDir = resolveHome(home, dependencies);
   const env = { ...baseEnv };
   const harnesses = dependencies.harnesses ?? readHarnesses();
   const homeVars = Object.values(harnesses).map((definition) => definition['home-env']).filter(Boolean);
@@ -196,7 +206,7 @@ function objectKeys(value, keys, label) {
 }
 
 export function validateManifest(value, { local = false, harnesses = readHarnesses() } = {}) {
-  objectKeys(value, local ? ['agents', 'sync-rules', 'enabled-rules'] : ['agents', 'skill', 'agents-md', 'sync-rules', 'deleted'], '清单');
+  objectKeys(value, local ? ['agents', 'sync-rules', 'enabled-rules'] : ['agents', 'skill', 'agents-md', 'tool', 'sync-rules', 'deleted'], '清单');
   if (!local || Object.hasOwn(value, 'agents')) value.agents = agentNames(value.agents, harnesses);
   if (local) {
     validateRules(Object.hasOwn(value, 'sync-rules') ? value['sync-rules'] : {});
@@ -206,6 +216,7 @@ export function validateManifest(value, { local = false, harnesses = readHarness
     }
     return value;
   }
+  validateTools(value.tool ?? []);
   check(Array.isArray(value.skill), 'skill 必须是数组。');
   const names = new Set();
   for (const entry of value.skill) {
@@ -501,7 +512,7 @@ function applyFragments(writes, dryrun, log) {
 function listCatalog(manifest, local, log) {
   const display = (agents) => agents.length ? agents.join(', ') : '无';
   log(`远程清单：${MANIFEST_URL}\n本机设置：${local.path}\n远程 agents：${display(manifest.agents)}\n本机 agents：${local.settings.agents ? display(local.settings.agents) : '跟随远程'}\n生效 agents：${display(effectiveAgents(manifest, local))}`);
-  for (const type of ['skill', 'agents-md']) {
+  for (const type of ['skill', 'agents-md', 'tool']) {
     for (const entry of manifest[type] ?? []) log(`${type}:${entry.name}\t${entry.source ?? OWN_SOURCE}`);
   }
   const rules = effectiveRules(manifest, local);
@@ -582,8 +593,12 @@ export function fetchRepository(source, path, dependencies = {}) {
   sourceName(source);
   const env = { ...(dependencies.gitEnv ?? dependencies.env ?? process.env), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
   runCommand('git', ['clone', '--quiet', '--depth=1', '--no-tags',
+    ...(dependencies.sparsePaths ? ['--filter=blob:none', '--sparse'] : []),
     ...(source.toLowerCase() === OWN_SOURCE.toLowerCase() ? ['--branch', 'main'] : []),
     '--', `https://github.com/${source}.git`, path], { env, timeout: 120_000 });
+  if (dependencies.sparsePaths) {
+    runCommand('git', ['-C', path, 'sparse-checkout', 'set', '--cone', ...dependencies.sparsePaths], { env, timeout: 120_000 });
+  }
 }
 
 function skillMetadata(path) {
@@ -923,6 +938,54 @@ function clean(options, dependencies, log) {
   log(`${options.dryrun ? '预览' : '清理'}完成：${paths.size} 个 skill 路径，${writes.size} 个指令文件，${settings.length} 个配置目录。`, { status: '完成' });
 }
 
+function validateTools(entries) {
+  check(Array.isArray(entries), 'tool 必须是数组。');
+  const names = new Set();
+  for (const entry of entries) {
+    objectKeys(entry, ['name', 'source', 'path'], 'tool');
+    skillName(entry.name); sourceName(entry.source);
+    check(!names.has(entry.name), `重复 tool 名：${entry.name}`);
+    names.add(entry.name);
+    check(typeof entry.path === 'string' && entry.path && !isAbsolute(entry.path)
+      && !entry.path.includes('\\') && !entry.path.split('/').some((part) => ['', '.', '..'].includes(part)),
+      `tool:${entry.name} 的 path 必须是仓库内的相对目录。`);
+  }
+  return entries;
+}
+
+function readTools(dependencies) {
+  const localFile = import.meta.url.startsWith('file:') && !(import.meta.main && process.argv[1] === '-')
+    ? new URL('./harness.json', import.meta.url) : null;
+  const text = dependencies.fetchManifest ? dependencies.fetchManifest()
+    : localFile && existsSync(localFile) ? readFileSync(localFile, 'utf8') : fetchManifest();
+  return validateTools(parseJson(text, '工具清单').tool ?? []);
+}
+
+function installTools(options, dependencies, log) {
+  const entries = readTools(dependencies);
+  const selected = options.targets.map(({ name }) => {
+    const entry = entries.find((item) => item.name === name);
+    check(entry, `未知工具：${name}；使用 --list tools 查看。`);
+    return entry;
+  });
+  const root = resolveHome(options.home, dependencies);
+  log('安装独立工具', { stage: true });
+  for (const entry of selected) {
+    const target = join(root, entry.name);
+    if (entryExists(target)) {
+      check(!lstatSync(target).isSymbolicLink() && existsSync(join(target, '.git'))
+        && existsSync(join(target, entry.path)), `安装路径已被占用：${target}；请指定其他 --home。`);
+      log(`tool:${entry.name} 已安装：${target}；执行 git pull 更新。`, { status: '跳过' });
+      continue;
+    }
+    mkdirSync(root, { recursive: true });
+    (dependencies.fetchRepository ?? fetchRepository)(entry.source, target, { ...dependencies, sparsePaths: [entry.path] });
+    log(`tool:${entry.name} → ${target}`, { status: '新增' });
+    log(`工具目录：${join(target, entry.path)}`);
+  }
+  log('完成', { stage: true });
+}
+
 export function sync(args, dependencies = {}) {
   const options = parseArgs(args);
   const log = dependencies.log ?? (options.help || options.mode === 'list' ? writeOutput : createProgressLogger());
@@ -932,6 +995,15 @@ export function sync(args, dependencies = {}) {
   }
   const [major, minor] = process.versions.node.split('.').map(Number);
   check(major > 22 || (major === 22 && minor >= 20), '需要 Node.js ≥22.20.0。');
+  if (options.listTools) {
+    for (const entry of readTools(dependencies)) log(`tool:${entry.name}\t${entry.source}\t${entry.path}`);
+    return;
+  }
+  if (options.targets?.some(({ type }) => type === 'tool')) {
+    check(options.mode === 'add' && options.targets.every(({ type }) => type === 'tool'),
+      '工具单独使用 --add tool:<name> 安装；在安装目录执行 git pull 更新。');
+    return installTools(options, dependencies, log);
+  }
   dependencies = { ...dependencies, harnesses: readHarnesses(dependencies) };
   for (const target of options.targets ?? []) {
     if (target.type === 'agent') target.name = harnessName(target.name, dependencies.harnesses);

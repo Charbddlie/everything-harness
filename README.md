@@ -4,7 +4,7 @@ Everything Harness（eh）集中管理 Codex、Copilot 等编码助手的 skills
 
 - `skills/`：通过 `sync.mjs` 安装和更新的 skills。
 - `agents-md/`：同步到各助手指令文件的规则片段。
-- `useful_tools/`：手动安装或运行的独立工具，不参与自动同步安装。
+- `useful_tools/`：按名称显式安装的简单工具，每份安装可独立 `git pull` 更新。
 
 ## 同步与清理
 
@@ -80,5 +80,21 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 
 | 工具 | 用途 |
 | --- | --- |
-| [codex-auto-approve](useful_tools/codex-auto-approve/README.md) | 在 tmux 中运行 Codex，按需开启审批框自动确认。 |
+| [codex-auto-approve](useful_tools/codex-auto-approve/README.md) | 在 tmux 中运行 Codex；显式启用后，检测命令执行或文件修改确认框并发送 Enter。 |
 | [gpu-holder](useful_tools/gpu-holder/README.md) | 通过 SSH 管理远程空闲 GPU，检测到其他进程时自动让出。 |
+
+```bash
+# 列出可用工具
+node sync.mjs --list tools
+
+# 默认安装到 ~/<工具名>
+node sync.mjs --add tool:codex-auto-approve tool:gpu-holder
+
+# 指定安装父目录，安装到 ~/tools/gpu-holder
+node sync.mjs --add tool:gpu-holder --home ~/tools
+
+# 在独立安装目录更新
+git -C ~/gpu-holder pull
+```
+
+每个安装目录是独立的 eh 仓库稀疏 checkout，程序位于其中的 `useful_tools/<工具名>/`。例如默认安装后，GPU Holder 的入口为 `~/gpu-holder/useful_tools/gpu-holder/gpu_holder.py`。安装完成后按工具 README 配置和启用；重复安装保留已有目录，更新使用 `git pull`。本机配置和开关状态由 Git 忽略。默认同步与 `--clean` 处理 skills 和规则，工具由显式安装命令管理。
