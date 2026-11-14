@@ -47,7 +47,7 @@ case $1 in
     else
       tmux new-session -d -s "$watcher" bash "$self" watch
       tmux set-option -t "$watcher" destroy-unattached off
-      echo '自动审批：开启（每 3 秒检查审批框）'
+      echo '自动审批：开启（每 3 秒扫描，审批后连续检查）'
     fi
     ;;
   off)
@@ -57,11 +57,14 @@ case $1 in
     echo '自动审批：关闭'
     ;;
   watch)
-    while sleep 3; do
+    interval=3
+    while sleep "$interval"; do
+      interval=3
       while read -r session attached pane dead mode; do
         if [[ $session == caa-active-* && $attached -gt 0 && $dead == 0 && $mode == 0 ]]; then
           if tmux capture-pane -p -J -t "$pane" 2>/dev/null | approval_visible; then
-            tmux send-keys -t "$pane" Enter 2>/dev/null || true
+            tmux send-keys -t "$pane" Enter 2>/dev/null || continue
+            interval=0.2
           fi
         fi
       done < <(tmux list-panes -a -F '#{session_name} #{session_attached} #{pane_id} #{pane_dead} #{pane_in_mode}')
