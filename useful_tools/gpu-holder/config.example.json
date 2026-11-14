@@ -1,0 +1,13 @@
+{
+  "servers": [
+    "gpu-server"
+  ],
+  "memory_fraction": 0.8,
+  "poll_interval": 2,
+  "refresh_interval": 3,
+  "idle_seconds": 10,
+  "idle_memory_mib": 512,
+  "ssh_timeout": 10,
+  "worker_python": "~/.local/share/gpu-holder/venv/bin/python",
+  "compute_duty_cycle": 0.1
+}

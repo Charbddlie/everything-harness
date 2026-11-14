@@ -2,6 +2,8 @@
 
 ## 开发范围
 
+- `useful_tools/` 存放实用、简单的独立工具，需要手动安装或运行；`sync.mjs` 不自动安装该目录中的工具。
+
 - `eh` 指本项目。Skill 源码放在 `skills/<name>/SKILL.md`，常驻规则放在 `agents-md/<name>.md`；本文件只用于仓库开发。
 - 内容、来源和规则在 `harness.json` 中维护，删除项长期保留在 `deleted`；harness 路径统一在 `harnesses.json` 中定义并按名称读取。
 - 同步入口为 `sync.mjs`，依赖 Node.js 内置模块、Git 和 curl。同步与清理共用路径枚举、指令块处理、原子写入和目录删除实现。

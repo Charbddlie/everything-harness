@@ -10,3 +10,5 @@ __pycache__/
 key.env
 .env
 .env.*
+
+useful_tools/codex-auto-approve/enabled

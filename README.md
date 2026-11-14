@@ -1,4 +1,12 @@
-# 同步与清理
+# Everything Harness
+
+Everything Harness（eh）集中管理 Codex、Copilot 等编码助手的 skills 和常驻规则，并收集实用的简单工具。
+
+- `skills/`：通过 `sync.mjs` 安装和更新的 skills。
+- `agents-md/`：同步到各助手指令文件的规则片段。
+- `useful_tools/`：手动安装或运行的独立工具，不参与自动同步安装。
+
+## 同步与清理
 
 以下示例通过 `--home` 将当前工作目录作为内容根目录；省略该参数时使用用户主目录。
 
@@ -16,7 +24,7 @@ Skill 安装到生效 agent 的 `.codex/skills`、`.copilot/skills`，所有 hom
 
 同步以“完成”步骤收尾，按需显示“本次未应用的 rule”和“未安装的独立skill”。独立 skill 指远程规则及本机生效规则均未包含的 skill，安装状态按 harness 定义检查。未命中、失败或成员为空的规则视为未应用；`--dryrun` 不应用规则。本机空数组会覆盖远程规则，界面会提示成员为空；可用 `--add rule:auto` 恢复 auto 的远程成员并立即应用。普通同步开头保存配置并保留本机覆盖，后续步骤失败时已完成的配置更新仍保留。
 
-## Windows PowerShell
+### Windows PowerShell
 
 ```powershell
 $env:HTTP_PROXY = 'http://127.0.0.1:7890'
@@ -25,7 +33,7 @@ $env:ALL_PROXY = 'http://127.0.0.1:7890'
 cmd /d /c "curl.exe -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home `"$($PWD.Path)`""
 ```
 
-## Linux / macOS
+### Linux / macOS
 
 ```sh
 export http_proxy=http://127.0.0.1:7890
@@ -34,7 +42,7 @@ export all_proxy=http://127.0.0.1:7890
 curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/sync.mjs | node --input-type=module - --home "$PWD"
 ```
 
-## 清理本项目内容
+### 清理本项目内容
 
 先预览：
 
@@ -67,3 +75,10 @@ curl -fsSL https://raw.githubusercontent.com/Charbddlie/everything-harness/main/
 - 删除各清理根目录中的整个 `.everything-harness`，包括本机设置和旧配置文件；保留其他 skills、外部锁文件和远程清单。再次同步从远程默认设置初始化。
 
 `--dryrun` 只预览，不删除或写入。失败显示具体路径，已完成的清理不回滚。完整管理说明见 [harness-manage](skills/harness-manage/SKILL.md)。
+
+## 实用工具
+
+| 工具 | 用途 |
+| --- | --- |
+| [codex-auto-approve](useful_tools/codex-auto-approve/README.md) | 在 tmux 中运行 Codex，按需开启审批框自动确认。 |
+| [gpu-holder](useful_tools/gpu-holder/README.md) | 通过 SSH 管理远程空闲 GPU，检测到其他进程时自动让出。 |
