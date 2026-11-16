@@ -156,6 +156,8 @@ class LifecycleTests(unittest.TestCase):
                     cmdline = Path(f"/proc/{worker.pid}/cmdline").read_bytes().split(b"\0")
                     self.assertEqual(cmdline[:2], [os.fsencode(sys.executable), os.fsencode(entry)])
                     self.assertIn("training warning", worker.log_path.read_text())
+                    mode_index = cmdline.index(b"--mode")
+                    self.assertEqual(cmdline[mode_index + 1], b"normal")
                 finally:
                     worker.stop()
                 self.assertIsNotNone(worker.process.poll())
@@ -165,18 +167,53 @@ class LifecycleTests(unittest.TestCase):
             root = Path(directory)
             python = str(root / "venv/bin/python")
             with patch.object(remote, "ROOT", root), patch.object(remote.shutil, "which", return_value=None), \
-                 patch.object(remote, "setup_command", side_effect=[False, True, True, False, True, True]) as setup:
+                 patch.object(remote, "setup_command", side_effect=[False, True, True, False, True, True, False, True]) as setup:
                 self.assertEqual(remote.prepare_environment({"worker_python": python}, threading.Event()), python)
                 commands = [call.args[0] for call in setup.call_args_list]
                 self.assertIn("venv", commands[0])
                 self.assertTrue(any("virtualenv.pyz" in arg for arg in commands[2]))
                 self.assertEqual(commands[4][:4], [python, "-m", "pip", "install"])
+                self.assertEqual(commands[-1][-1], "setproctitle==1.3.7")
             stop = threading.Event()
             stop.set()
             with patch.object(remote, "ROOT", root):
                 with self.assertRaises(InterruptedError):
                     remote.setup_command([sys.executable, "-c", "import time; time.sleep(30)"], stop, "test setup")
                 self.assertEqual(json.loads((root / "status.json").read_text())["message"], "test setup")
+
+    def test_modes_config_deploy_and_worker_title(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({"servers": ["node-a", {"host": "node-b", "gpus": [0, 1]}]}))
+            config, selected = local.set_mode(path, "real", "node-b", [1])
+            self.assertEqual(len(selected), 1)
+            manager = remote.Manager({**CONFIG, **selected[0]}, FakeWorker)
+            rows = manager.update([card(), card(1)], now=0)
+            self.assertEqual([r["mode"] for r in rows], ["normal", "real"])
+            with patch.object(local, "ssh", return_value={}) as ssh:
+                local.deploy(selected[0], config)
+                self.assertIn('"gpu_modes": {"1": "real"}', ssh.call_args.args[3])
+            before = path.read_text()
+            for host, gpus in (("missing", None), (None, [0]), ("node-b", [2])):
+                with self.assertRaises(ValueError):
+                    local.set_mode(path, "real", host, gpus)
+                self.assertEqual(path.read_text(), before)
+            config, _ = local.set_mode(path, "normal")
+            self.assertTrue(all(s["mode"] == "normal" and not s["gpu_modes"] for s in config["servers"]))
+            config, _ = local.set_mode(path, "real", "node-a")
+            self.assertEqual(local.load_config(path)["servers"][0]["mode"], "real")
+        title = SimpleNamespace(setproctitle=lambda value: titles.append(value))
+        torch = SimpleNamespace(set_num_threads=lambda count: None)
+        for mode, expected in (("normal", "gpuholder.py"), ("real", "training.py")):
+            titles = []
+            with patch.dict(sys.modules, {"setproctitle": title, "torch": torch}), \
+                 patch.dict(os.environ), patch.object(train.signal, "signal"), \
+                 patch.object(train, "hold_gpu") as hold, \
+                 patch.object(sys, "argv", ["train.py", "--mode", mode, "--uuid", "GPU-0",
+                                           "--fraction", "0.8", "--duty-cycle", "0.1", "--parent", "1"]):
+                train.main()
+                self.assertEqual(titles, [expected])
+                self.assertEqual(hold.call_args.args[1:4], (0.8, 0.1, 1))
 
     def test_config_and_dashboard(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -235,6 +272,7 @@ class TmuxIntegrationTests(unittest.TestCase):
             config_path = root / "config.json"
             config_path.write_text(json.dumps({"servers": [{"host": "remote-a", "worker_python": sys.executable}, "unreachable"], "idle_seconds": 100,
                                               "poll_interval": 0.1, "refresh_interval": 0.1}))
+            (bindir / "setproctitle.py").write_text("def setproctitle(value): pass\n")
             (bindir / "torch.py").write_text("from types import SimpleNamespace\nversion = SimpleNamespace(cuda='12.6')\n")
             env = {**os.environ, "HOME": str(root / "local"), "PYTHONPATH": str(bindir),
                    "PATH": str(bindir) + os.pathsep + os.environ["PATH"]}
@@ -257,10 +295,22 @@ class TmuxIntegrationTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 wait_state("idle")
                 result = command("status")
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("在线", result.stdout)
                 self.assertIn("unreachable", result.stdout)
                 self.assertIn("connection refused", result.stdout)
+                local.set_mode(config_path, "real", "remote-a", [0])
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    current = wait_state("idle")
+                    if current["gpus"][0].get("mode") == "real":
+                        break
+                    time.sleep(0.1)
+                self.assertEqual(current["gpus"][0]["mode"], "real")
+                result = subprocess.run([sys.executable, str(project / "gpu_holder.py"), "status",
+                                         "--json", "--config", str(config_path)], env=env,
+                                        text=True, capture_output=True, timeout=40)
+                self.assertEqual(json.loads(result.stdout)["remote-a"]["gpus"][0]["mode"], "real")
                 process = "<process_info><pid>999</pid><type>C</type></process_info>"
                 gpu_xml.write_text(XML.format(processes=process))
                 wait_state("busy")

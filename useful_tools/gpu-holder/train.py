@@ -61,11 +61,14 @@ def hold_gpu(torch, fraction, duty_cycle, parent, stop):
 
 def main():
     parser = argparse.ArgumentParser(description="轻量 CUDA 训练与显存占用")
+    parser.add_argument("--mode", choices=("normal", "real"), default="normal")
     parser.add_argument("--uuid", required=True)
     parser.add_argument("--fraction", type=float, required=True)
     parser.add_argument("--duty-cycle", type=float, required=True)
     parser.add_argument("--parent", type=int, required=True)
     args = parser.parse_args()
+    from setproctitle import setproctitle
+    setproctitle("training.py" if args.mode == "real" else "gpuholder.py")
     os.environ["CUDA_VISIBLE_DEVICES"] = args.uuid
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

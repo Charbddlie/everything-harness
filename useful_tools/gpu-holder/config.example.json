@@ -9,5 +9,6 @@
   "idle_memory_mib": 512,
   "ssh_timeout": 10,
   "worker_python": "~/.local/share/gpu-holder/venv/bin/python",
-  "compute_duty_cycle": 0.1
+  "compute_duty_cycle": 0.1,
+  "mode": "normal"
 }

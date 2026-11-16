@@ -16,13 +16,14 @@ import time
 BASE = Path(__file__).resolve().parent
 SESSION = "gpu-holder"
 REMOTE = ".local/share/gpu-holder/remote.py"
+MODES = ("normal", "real")
 DEFAULTS = {"memory_fraction": 0.8, "poll_interval": 2, "refresh_interval": 3,
             "idle_seconds": 10, "idle_memory_mib": 512, "ssh_timeout": 10,
             "compute_duty_cycle": 0.1}
 
 
 def load_config(path):
-    config = {"worker_python": "~/.local/share/gpu-holder/venv/bin/python", **DEFAULTS, **json.loads(path.read_text())}
+    config = {"mode": "normal", "worker_python": "~/.local/share/gpu-holder/venv/bin/python", **DEFAULTS, **json.loads(path.read_text())}
     for key in DEFAULTS:
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -35,6 +36,8 @@ def load_config(path):
         raise ValueError(f"请先在 {path} 的 servers 中填写 SSH 主机名")
     if config["compute_duty_cycle"] > 1:
         raise ValueError("compute_duty_cycle 必须在 0 到 1 之间")
+    if config["mode"] not in MODES:
+        raise ValueError("mode 必须是 normal 或 real")
     servers = []
     for item in config["servers"]:
         server = {"host": item} if isinstance(item, str) else dict(item)
@@ -50,6 +53,14 @@ def load_config(path):
         python = server["worker_python"]
         if not isinstance(python, str) or not python.strip() or "\0" in python:
             raise ValueError(f"{host}: worker_python 必须是远端 Python 路径或命令名")
+        server["mode"] = server.get("mode", config["mode"])
+        modes = server.setdefault("gpu_modes", {})
+        if server["mode"] not in MODES or not isinstance(modes, dict) or any(
+                not key.isdecimal() or str(int(key)) != key or value not in MODES
+                for key, value in modes.items()):
+            raise ValueError(f"{host}: mode/gpu_modes 必须使用 normal 或 real，GPU 键使用索引字符串")
+        if gpus is not None and any(int(key) not in gpus for key in modes):
+            raise ValueError(f"{host}: gpu_modes 只能配置受管理的 GPU")
         servers.append(server)
     if len({s["host"] for s in servers}) != len(servers):
         raise ValueError("servers 中有重复主机")
@@ -74,7 +85,7 @@ def ssh(host, config, command, source=None):
 def deploy(server, config):
     remote_config = {key: config[key] for key in
                      ("memory_fraction", "poll_interval", "idle_seconds", "idle_memory_mib", "compute_duty_cycle")}
-    remote_config["worker_python"] = server["worker_python"]
+    remote_config.update({key: server[key] for key in ("worker_python", "mode", "gpu_modes")})
     if "gpus" in server:
         remote_config["gpus"] = server["gpus"]
     files = {name: (BASE / name).read_text() for name in ("remote.py", "train.py")}
@@ -101,7 +112,7 @@ def deploy(server, config):
 
 def render(config, states):
     lines = ["GPU Holder  " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-             "占卡=本程序持有显存  正常=其他进程/资源使用  空闲=等待占卡",
+             "占卡=本程序持有显存（普通/真实）  正常=其他进程/资源使用  空闲=等待占卡",
              "", f"{'SERVER':<28} {'占卡':>5} {'正常':>5} {'问题':>5} {'空闲':>5}  状态"]
     details = []
     for server in config["servers"]:
@@ -117,6 +128,10 @@ def render(config, states):
                       for state in ("holding", "busy", "error", "idle")]
             label = status.get("message") or ("启动中" if status.get("starting") else "在线")
         lines.append(f"{host:<28} " + " ".join(f"{n:>7}" for n in counts) + "  " + label)
+        holding = [c for c in cards if c["state"] == "holding"]
+        if holding:
+            lines[-1] += "  " + " ".join(
+                f"GPU{c['index']}:{'真实' if c.get('mode') == 'real' else '普通'}" for c in holding)
         for card in cards:
             if card.get("error"):
                 details.append(f"{host} GPU {card['index']}: {card['error']}")
@@ -126,7 +141,7 @@ def render(config, states):
     return "\n".join(lines)
 
 
-def monitor(config):
+def monitor(config, config_path):
     states = {}
     lock = threading.Lock()
     stop = threading.Event()
@@ -134,15 +149,18 @@ def monitor(config):
         signal.signal(sig, lambda *_: stop.set())
 
     def watch(server):
-        deployed = False
+        deployed = None
         host = server["host"]
         while not stop.is_set():
             try:
-                status = (ssh(host, config, f"python3 {REMOTE} ensure") if deployed
-                          else deploy(server, config))
-                deployed = True
+                current = load_config(config_path)
+                current_server = next(s for s in current["servers"] if s["host"] == host)
+                settings = ({key: value for key, value in current.items() if key != "servers"}, current_server)
+                status = (ssh(host, current, f"python3 {REMOTE} ensure") if deployed == settings
+                          else deploy(current_server, current))
+                deployed = settings
             except Exception as exc:
-                deployed = False
+                deployed = None
                 with lock:
                     previous = states.get(host, {}).get("gpus", [])
                 status = {"gpus": [dict(card, state="error") for card in previous], "error": str(exc)}
@@ -210,20 +228,69 @@ def stop_all(config):
     return int(any(error for _, error in results))
 
 
+def set_mode(config_path, mode, host=None, gpus=None):
+    config = load_config(config_path)
+    selected = [s for s in config["servers"] if host is None or s["host"] == host]
+    if not selected:
+        raise ValueError(f"未配置服务器：{host}")
+    if gpus is not None and (host is None or any(i < 0 for i in gpus)):
+        raise ValueError("--gpus 需要 --host 和非负 GPU 索引")
+    for server in selected:
+        if gpus is None:
+            server["mode"] = mode
+            server["gpu_modes"] = {}
+        else:
+            if "gpus" in server and not set(gpus) <= set(server["gpus"]):
+                raise ValueError("只能切换配置中受管理的 GPU")
+            server["gpu_modes"].update({str(i): mode for i in gpus})
+    if host is None:
+        config["mode"] = mode
+    temporary = config_path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+    temporary.replace(config_path)
+    return config, selected
+
+
 def main():
     parser = argparse.ArgumentParser(description="在远程空闲 NVIDIA GPU 上自动占用显存")
-    parser.add_argument("command", nargs="?", default="start", choices=["start", "run", "status", "stop"])
+    parser.add_argument("command", nargs="?", default="start", choices=["start", "run", "status", "stop", "mode"])
     parser.add_argument("--config", type=Path, default=BASE / "config.json")
+    parser.add_argument("mode", nargs="?", choices=MODES, help="normal=普通占卡；real=当前任务使用中的占卡")
+    parser.add_argument("--host", help="mode 的目标服务器，省略时选择全部")
+    parser.add_argument("--gpus", nargs="+", type=int, help="mode 的目标 GPU 索引，需同时指定 --host")
+    parser.add_argument("--json", action="store_true", help="status 输出 JSON，供 agent 读取")
     args = parser.parse_args()
+    if args.command == "mode" and args.mode is None:
+        parser.error("mode 需要 normal 或 real")
+    if args.command != "mode" and (args.mode or args.host or args.gpus is not None):
+        parser.error("模式、--host、--gpus 仅用于 mode 命令")
+    if args.json and args.command != "status":
+        parser.error("--json 仅用于 status 命令")
     config_path = args.config.resolve()
     config = load_config(config_path)
-    if args.command == "start":
+    if args.command == "mode":
+        config, selected = set_mode(config_path, args.mode, args.host, args.gpus)
+        if tmux_exists():
+            print(f"已保存 {args.mode}；本地监控将在下一次刷新时应用，请用 status --json 确认")
+            return 0
+        def apply(server):
+            try:
+                deploy(server, config)
+                return server["host"], None
+            except Exception as exc:
+                return server["host"], str(exc)
+        with ThreadPoolExecutor(max_workers=len(selected)) as pool:
+            results = list(pool.map(apply, selected))
+        for host, error in results:
+            print(f"{host}: " + (f"配置已保存，部署失败：{error}" if error else f"已应用 {args.mode}"))
+        return int(any(error for _, error in results))
+    elif args.command == "start":
         start(config_path)
     elif args.command == "run":
         import fcntl
         with (BASE / ".monitor.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            monitor(config)
+            monitor(config, config_path)
     elif args.command == "stop":
         return stop_all(config)
     else:
@@ -239,7 +306,8 @@ def main():
                 return server["host"], {"error": str(exc), "gpus": []}
         with ThreadPoolExecutor(max_workers=len(config["servers"])) as pool:
             states.update(pool.map(fetch, config["servers"]))
-        print(render(config, states))
+        print(json.dumps(states, ensure_ascii=False) if args.json else render(config, states))
+        return int(any(state.get("error") for state in states.values()))
     return 0
 
 

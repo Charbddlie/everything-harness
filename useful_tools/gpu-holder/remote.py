@@ -60,6 +60,7 @@ class Worker:
                 [os.path.expanduser(config["worker_python"]), str(ROOT / "train.py"),
                  "--uuid", card["uuid"], "--fraction", str(config["memory_fraction"]),
                  "--duty-cycle", str(config["compute_duty_cycle"]),
+                 "--mode", config.get("gpu_modes", {}).get(str(card["index"]), config.get("mode", "normal")),
                  "--parent", str(os.getpid())],
                 stdout=subprocess.PIPE, stderr=log, text=True)
         self.pid = self.process.pid
@@ -123,6 +124,7 @@ class Manager:
         result = []
         for original in cards:
             card = dict(original)
+            card["mode"] = self.config.get("gpu_modes", {}).get(str(card["index"]), self.config.get("mode", "normal"))
             uuid = card["uuid"]
             worker = self.workers.get(uuid)
             external = [pid for pid in card.get("pids", []) if not worker or pid != worker.pid]
@@ -212,6 +214,9 @@ def prepare_environment(config, stop):
                        "--index-url", "https://download.pytorch.org/whl/cu126"],
                       stop, "安装 CUDA PyTorch")
         setup_command([python, "-c", probe], stop, "检查训练环境")
+    if not setup_command([python, "-c", "import setproctitle"], stop, "检查进程名称模块", check=False):
+        setup_command([python, "-m", "pip", "install", "--only-binary=:all:", "setproctitle==1.3.7"],
+                      stop, "安装进程名称模块")
     return python
 
 
