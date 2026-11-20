@@ -1,11 +1,11 @@
 ---
 name: harness-manage
-description: 管理 eh 的本机同步范围与 harness 目标，以及新建、导入 skill 或 agents-md 的流程。当用户提到“更新skill”“同步eh”或向 eh 添加 skill、agents-md 时触发，对项目级skill或AGENTS.md做修改时不要触发。
+description: 管理 eh 的本机同步范围与 harness 目标，以及 skill、agents-md 和独立工具的维护流程。当开发 eh 的独立工具，或用户提到“更新skill”“同步eh”或向 eh 添加 skill、agents-md 时触发，对项目级skill或AGENTS.md做修改时不要触发。
 ---
 
 # Harness 管理
 
-`eh` 指 everything-harness。源码发布到 GitHub 后，由 `sync.mjs` 单向覆盖安装。需要 Node.js ≥22.20.0、Git 和 curl；运行时直接下载、检查和复制目录。
+`eh` 指 everything-harness。Skill 和 agents-md 源码发布到 GitHub 后，由 `sync.mjs` 单向覆盖安装；独立工具通过 Git 安装、更新和发布。需要 Node.js ≥22.20.0、Git 和 curl；运行时直接下载、检查和复制目录。
 
 ## 新建 skill 或 agents-md 的 SOP
 
@@ -87,7 +87,13 @@ node sync.mjs --add tool:codex-auto-approve tool:gpu-holder
 node sync.mjs --add tool:gpu-holder --home ~/tools
 ```
 
-每个工具安装目录是独立的稀疏 Git checkout，程序在该目录内的清单 `path` 下，后续执行 `git pull` 更新。本机配置与状态文件由工具的 Git 忽略规则保留。安装后按工具 README 配置和启用。重复安装保留现有目录；工具安装与 skill、规则、agent 操作分别执行。默认同步及 `--clean` 处理 skills 和指令，工具按独立仓库手动维护。
+每个工具安装目录是清单 `source` 仓库的一份独立稀疏克隆，程序在该目录内的清单 `path` 下，`origin` 指向该源码仓库。本机配置与状态文件由工具的 Git 忽略规则保留。安装后按工具 README 配置和启用。重复安装保留现有目录；默认同步及 `--clean` 处理 skills 和指令。
+
+工具开发流程：
+
+1. 进入已安装的工具仓库，读取 `AGENTS.md`，先执行 `git pull` 更新源码。
+2. 在清单 `path` 对应目录中开发并完成验证。
+3. 在该工具仓库中提交本次改动并直接 `git push` 到 `origin`；推送成功即完成源码发布。
 
 ## 路径与覆盖
 
