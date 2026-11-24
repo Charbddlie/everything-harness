@@ -12,3 +12,4 @@ key.env
 .env.*
 
 useful_tools/codex-auto-approve/enabled
+useful_tools/codex-auto-approve/.runtime/

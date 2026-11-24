@@ -2,72 +2,25 @@
 set -euo pipefail
 
 self=$(readlink -f -- "${BASH_SOURCE[0]}")
-watcher=caa-approver
-
-approval_visible() {
-  awk '
-    /^[[:space:]]*(Would you like to (run the following command|make the following edits|grant these permissions|send input to .+)\?|Do you want to approve network access to ".+"\?)[[:space:]]*$/ { heading = 1 }
-    /^[[:space:]]*›[[:space:]]+[0-9]+\.[[:space:]]+Yes, (proceed|just this once|grant these permissions for this turn)([[:space:]]+\([^)]*\))?[[:space:]]*$/ { selected = 1 }
-    /[^[:space:]]/ { last = $0 }
-    END {
-      footer = last ~ /^[[:space:]]*Press enter to confirm or esc to cancel( or .+ to open thread)?[[:space:]]*$/
-      exit !(heading && selected && footer)
-    }
-  '
-}
+service=caa-approver
 
 case $1 in
-  codex)
-    shift
-    session=caa-active-$(date +%Y%m%d-%H%M%S)-$$
-    tmux new-session -d -s "$session" -c "$PWD" bash "$self" run "$session" "$@"
-    if [[ -n ${TMUX:-} ]]; then
-      tmux switch-client -t "=$session"
-    else
-      tmux attach-session -t "=$session"
-    fi
-    ;;
-  run)
-    session=$2
-    shift 2
-    tmux set-option -t "$session" destroy-unattached off
-    tmux set-hook -t "$session" client-detached \
-      "run-shell 'bash \"$self\" park $session'"
-    exec codex "$@"
-    ;;
-  park)
-    session=$2
-    [[ $(tmux display-message -p -t "$session" '#{session_attached}') == 0 ]] || exit 0
-    tmux new-session -d -s "${session/caa-active-/caa-background-}" -t "$session"
-    tmux kill-session -t "=$session"
-    ;;
   toggle)
-    if tmux has-session -t "=$watcher" 2>/dev/null; then
+    if tmux has-session -t "=$service" 2>/dev/null; then
       bash "$self" off
     else
-      tmux new-session -d -s "$watcher" bash "$self" watch
-      tmux set-option -t "$watcher" destroy-unattached off
-      echo '确认助手：开启（每 3 秒检查确认框，确认后连续检查）'
+      tmux new-session -d -s "$service" bash "$self" serve
+      tmux set-option -t "$service" destroy-unattached off
+      echo '确认助手：开启（所有 Codex 会话）'
     fi
     ;;
   off)
-    if tmux has-session -t "=$watcher" 2>/dev/null; then
-      tmux kill-session -t "=$watcher"
+    if tmux has-session -t "=$service" 2>/dev/null; then
+      tmux kill-session -t "=$service"
     fi
     echo '确认助手：关闭'
     ;;
-  watch)
-    interval=3
-    while sleep "$interval"; do
-      interval=3
-      while read -r session attached pane dead mode; do
-        if [[ $session == caa-active-* && $attached -gt 0 && $dead == 0 && $mode == 0 ]]; then
-          if tmux capture-pane -p -J -t "$pane" 2>/dev/null | approval_visible; then
-            tmux send-keys -t "$pane" Enter 2>/dev/null || continue
-            interval=0.2
-          fi
-        fi
-      done < <(tmux list-panes -a -F '#{session_name} #{session_attached} #{pane_id} #{pane_dead} #{pane_in_mode}')
-    done
+  serve)
+    exec python3 "${self%/*}/service.py"
     ;;
 esac
